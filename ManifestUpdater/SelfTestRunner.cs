@@ -14,6 +14,7 @@ internal static class SelfTestRunner
 			TestCleanValidationFolder(root, results);
 			TestReleaseUrlSynchronization(results);
 			TestWingetCreateCommandModes(results);
+			TestCredentialStatusCheck(results);
 			TestProfileRoundTrip(root, results);
 			await TestInstallerInspectionAsync(results);
 			int verifyIndex = Array.FindIndex(args, argument => string.Equals(argument, "--verify-folder", StringComparison.OrdinalIgnoreCase));
@@ -175,7 +176,21 @@ ManifestVersion: 1.12.0
 		Assert(WingetCommandService.RequiresInteractiveConsole("update", "--interactive Contoso.Sample"), "Interactive updates require a console.");
 		Assert(!WingetCommandService.RequiresInteractiveConsole("update", "--version 2.0 Contoso.Sample"), "Non-interactive updates should keep captured output in the Studio.");
 		Assert(!WingetCommandService.RequiresInteractiveConsole("show", "Contoso.Sample"), "Show should keep captured output in the Studio.");
+		System.Diagnostics.ProcessStartInfo tokenStartInfo = WingetCommandService.CreateInteractiveProcessStartInfo("token", "--store", Environment.CurrentDirectory);
+		Assert(string.Equals(tokenStartInfo.FileName, "powershell.exe", StringComparison.OrdinalIgnoreCase), "Interactive commands must use the persistent console host.");
+		Assert(!tokenStartInfo.UseShellExecute && !tokenStartInfo.CreateNoWindow, "The WingetCreate sign-in console must remain visible and interactive.");
+		Assert(tokenStartInfo.ArgumentList.Contains("-EncodedCommand"), "The persistent console host must receive its fixed launcher script safely.");
+		Assert(tokenStartInfo.Environment.TryGetValue("WMS_WINGETCREATE_ARGUMENTS", out string? tokenArguments)
+			&& tokenArguments is not null
+			&& tokenArguments.Contains("token", StringComparison.Ordinal)
+			&& tokenArguments.Contains("--store", StringComparison.Ordinal), "The exact token --store command must reach WingetCreate.");
 		results.Add("PASS: WingetCreate interactive commands are routed to a real console.");
+	}
+
+	private static void TestCredentialStatusCheck(List<string> results)
+	{
+		_ = WingetCommandService.IsGitHubTokenStored();
+		results.Add("PASS: WingetCreate token status can be checked without reading token data.");
 	}
 
 	private static async Task TestInstallerInspectionAsync(List<string> results)

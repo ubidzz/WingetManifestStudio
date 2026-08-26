@@ -23,6 +23,7 @@ public partial class MainForm : Form
 	private StudioTextBox toolArgumentsBox = null!;
 	private StudioCheckBox insecureUrlCheck = null!;
 	private Button validateButton = null!;
+	private Button toolRunButton = null!;
 	private CancellationTokenSource? operationCancellation;
 	private bool isBusy;
 	private readonly Dictionary<string, StudioNavButton> navigationButtons = new(StringComparer.Ordinal);
@@ -31,6 +32,10 @@ public partial class MainForm : Form
 	private Point dragWindowOrigin;
 	private readonly bool uiTestMode;
 	private bool systemDialogOpen;
+	private bool toolAvailabilityCheckStarted;
+	private bool wingetCreateReady;
+	private System.Windows.Forms.Timer? wingetCreateStartupTimer;
+	private System.Windows.Forms.Timer? tokenStatusTimer;
 
 	public MainForm() : this(false)
 	{
@@ -61,7 +66,7 @@ public partial class MainForm : Form
 		}
 	}
 
-	private async void MainForm_Shown(object? sender, EventArgs e)
+	private void MainForm_Shown(object? sender, EventArgs e)
 	{
 		try
 		{
@@ -72,14 +77,118 @@ public partial class MainForm : Form
 				modeLabel.Text = "SAFE UI TEST MODE";
 				return;
 			}
-			bool available = await WingetCommandService.IsAvailableAsync("wingetcreate.exe", TimeSpan.FromSeconds(3));
-			modeLabel.Text = available
-				? "WINGETCREATE READY • NO TOKEN STORED"
-				: "LOCAL AUTHORING READY • WINGETCREATE OPTIONAL";
+
+			modeLabel.Text = "LOCAL AUTHORING READY • WINGETCREATE STARTING SHORTLY";
+			toolLoadingProgress.Visible = false;
+			SetStatus("Manifest Studio is ready. WingetCreate official tools will load shortly in the background.");
+			ScheduleToolAvailabilityCheck();
 		}
 		catch (Exception ex)
 		{
 			ShowError("Startup could not finish", ex);
+		}
+	}
+
+	private void ScheduleToolAvailabilityCheck()
+	{
+		wingetCreateStartupTimer?.Stop();
+		wingetCreateStartupTimer?.Dispose();
+		wingetCreateStartupTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+		wingetCreateStartupTimer.Tick += (_, _) =>
+		{
+			wingetCreateStartupTimer?.Stop();
+			wingetCreateStartupTimer?.Dispose();
+			wingetCreateStartupTimer = null;
+			if (IsDisposed || Disposing) return;
+			modeLabel.Text = "LOCAL AUTHORING READY • LOADING WINGETCREATE";
+			toolLoadingProgress.Visible = true;
+			SetStatus("Local manifest tools are ready. Preparing WingetCreate in the background...");
+			StartToolAvailabilityCheck();
+		};
+		wingetCreateStartupTimer.Start();
+	}
+
+	protected override void OnFormClosed(FormClosedEventArgs eventArgs)
+	{
+		wingetCreateStartupTimer?.Stop();
+		wingetCreateStartupTimer?.Dispose();
+		wingetCreateStartupTimer = null;
+		tokenStatusTimer?.Stop();
+		tokenStatusTimer?.Dispose();
+		tokenStatusTimer = null;
+		base.OnFormClosed(eventArgs);
+	}
+
+	private void StartTokenStatusMonitor()
+	{
+		if (uiTestMode || tokenStatusTimer != null || IsDisposed || Disposing) return;
+
+		tokenStatusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+		tokenStatusTimer.Tick += (_, _) => RefreshTokenStatus();
+		tokenStatusTimer.Start();
+	}
+
+	private void RefreshTokenStatus()
+	{
+		if (!wingetCreateReady || IsDisposed || Disposing) return;
+
+		bool tokenStored = WingetCommandService.IsGitHubTokenStored();
+		modeLabel.Text = tokenStored
+			? "WINGETCREATE READY • TOKEN STORED"
+			: "WINGETCREATE READY • NO TOKEN STORED";
+		securityBadge.Text = tokenStored
+			? "LOCAL-FIRST • TOKEN STORED"
+			: "LOCAL-FIRST • NO TOKEN STORED";
+	}
+
+	private void StartToolAvailabilityCheck()
+	{
+		if (toolAvailabilityCheckStarted || IsDisposed || Disposing) return;
+		toolAvailabilityCheckStarted = true;
+		_ = UpdateToolAvailabilityAsync();
+	}
+
+	private async Task UpdateToolAvailabilityAsync()
+	{
+		try
+		{
+			bool available = await Task.Run(
+				() => WingetCommandService.IsAvailableAsync("wingetcreate.exe", TimeSpan.FromSeconds(3)));
+			if (IsDisposed || Disposing) return;
+			if (!available)
+			{
+				wingetCreateReady = false;
+				modeLabel.Text = "LOCAL AUTHORING READY • WINGETCREATE OPTIONAL";
+				SetStatus("Local manifest tools are ready. Install WingetCreate only when you need the official command tools.");
+				return;
+			}
+
+			modeLabel.Text = "LOCAL AUTHORING READY • PREPARING WINGETCREATE";
+			SetStatus("Local manifest tools are ready. Preparing WingetCreate in the background...");
+			bool warmed = await Task.Run(
+				() => WingetCommandService.WarmUpAsync(TimeSpan.FromSeconds(20)));
+			if (IsDisposed || Disposing) return;
+			wingetCreateReady = true;
+			RefreshTokenStatus();
+			StartTokenStatusMonitor();
+			SetStatus(warmed
+				? "WingetCreate is ready. All manifest and official command tools are available."
+				: "WingetCreate is installed and available. Its first official command may need a little extra time.");
+		}
+		catch
+		{
+			if (IsDisposed || Disposing) return;
+			wingetCreateReady = false;
+			modeLabel.Text = "LOCAL AUTHORING READY • WINGETCREATE OPTIONAL";
+			SetStatus("Local manifest tools are ready. WingetCreate could not be prepared in the background.");
+		}
+		finally
+		{
+			if (!IsDisposed && !Disposing)
+			{
+				toolLoadingProgress.Visible = false;
+				toolRunButton.Enabled = wingetCreateReady;
+			}
 		}
 	}
 
@@ -296,7 +405,19 @@ public partial class MainForm : Form
 		argsRow.Controls.Add(NewInlineLabel("Arguments"));
 		toolArgumentsBox = NewTextBox(780);
 		argsRow.Controls.Add(toolArgumentsBox);
-		argsRow.Controls.Add(CreateButton("Run", async (_, _) => await RunOfficialCommandAsync(), true));
+		string suggestedArguments = string.Empty;
+		toolCommandBox.SelectedIndexChanged += (_, _) =>
+		{
+			if (!string.IsNullOrWhiteSpace(toolArgumentsBox.Text)
+				&& !string.Equals(toolArgumentsBox.Text, suggestedArguments, StringComparison.Ordinal)) return;
+			suggestedArguments = string.Equals(toolCommandBox.Text, "token", StringComparison.OrdinalIgnoreCase)
+				? "--store"
+				: string.Empty;
+			toolArgumentsBox.Text = suggestedArguments;
+		};
+		toolRunButton = CreateButton("Run", async (_, _) => await RunOfficialCommandAsync(), true);
+		toolRunButton.Enabled = uiTestMode;
+		argsRow.Controls.Add(toolRunButton);
 		root.Controls.Add(argsRow, 0, 2);
 
 		toolOutputBox = NewRichTextBox();
@@ -693,6 +814,7 @@ public partial class MainForm : Form
 			"submit" => $"--prtitle {QuoteArgument($"Add or update {project.PackageIdentifier} {project.PackageVersion}")} {QuoteArgument(folder)}",
 			"show" => $"--version {QuoteArgument(project.PackageVersion)} {QuoteArgument(project.PackageIdentifier)}",
 			"new-locale" or "update-locale" => $"--locale {QuoteArgument(project.DefaultLocale)} --out {QuoteArgument(folder)} --version {QuoteArgument(project.PackageVersion)} {QuoteArgument(project.PackageIdentifier)}",
+			"token" => "--store",
 			_ => string.Empty
 		};
 	}
@@ -709,6 +831,11 @@ public partial class MainForm : Form
 			await Task.CompletedTask;
 			return;
 		}
+		if (!wingetCreateReady)
+		{
+			SetStatus("WingetCreate is still preparing. Local manifest tools remain available while it finishes.");
+			return;
+		}
 		try
 		{
 			SetBusy(true);
@@ -719,9 +846,9 @@ public partial class MainForm : Form
 			{
 				int processId = WingetCommandService.StartWingetCreateInteractive(command, arguments, commandFolder);
 				toolOutputBox.AppendText(
-					"WingetCreate opened in its own console because this command asks interactive questions."
+					"WingetCreate opened in a persistent console because this command asks interactive questions."
 					+ Environment.NewLine
-					+ "Complete the questions in that console window. Manifest Studio remains available here."
+					+ "Complete the questions in that console window. It will stay open so you can read any error. Manifest Studio remains available here."
 					+ Environment.NewLine
 					+ $"Process ID: {processId}");
 				SetStatus("WingetCreate opened an interactive console. Complete the questions there.");
@@ -754,6 +881,15 @@ public partial class MainForm : Form
 			CommandResult result = await WingetCommandService.InstallWingetCreateAsync(operationCancellation!.Token);
 			toolOutputBox.Text = result.CombinedOutput;
 			SetStatus(result.ExitCode == 0 ? "WingetCreate is installed." : "WingetCreate installation reported a problem.");
+			if (result.ExitCode == 0)
+			{
+				toolAvailabilityCheckStarted = false;
+				wingetCreateReady = false;
+				toolRunButton.Enabled = false;
+				toolLoadingProgress.Visible = true;
+				modeLabel.Text = "LOCAL AUTHORING READY • LOADING WINGETCREATE";
+				BeginInvoke(new Action(StartToolAvailabilityCheck));
+			}
 		}
 		catch (Exception ex) { ShowError("WingetCreate could not be installed", ex); }
 		finally { SetBusy(false); }
@@ -978,7 +1114,7 @@ public partial class MainForm : Form
 		Panel copy = new() { Dock = DockStyle.Fill };
 		copy.Controls.Add(description);
 		copy.Controls.Add(title);
-		Label safety = new() { Text = "LOCAL-FIRST\n\nNo GitHub token stored\nNo manifest overwritten without backup\nNo installer downloaded automatically", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = SuccessColor, Font = new Font("Segoe UI Semibold", 9.5F), BackColor = InputColor, Padding = new Padding(18) };
+		Label safety = new() { Text = "LOCAL-FIRST\n\nGitHub token stays in Windows Credential Manager\nNo manifest overwritten without backup\nNo installer downloaded automatically", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = SuccessColor, Font = new Font("Segoe UI Semibold", 9.5F), BackColor = InputColor, Padding = new Padding(18) };
 		hero.Controls.Add(copy, 0, 0);
 		hero.Controls.Add(safety, 1, 0);
 		return hero;

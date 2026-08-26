@@ -19,6 +19,7 @@ partial class MainForm
 	private Label statusLabel = null!;
 	private StudioBusyIndicator busyProgress = null!;
 	private Label modeLabel = null!;
+	private StudioLoadingBar toolLoadingProgress = null!;
 
 	protected override void Dispose(bool disposing)
 	{
@@ -44,6 +45,7 @@ partial class MainForm
 		statusLabel = new Label();
 		busyProgress = new StudioBusyIndicator();
 		modeLabel = new Label();
+		toolLoadingProgress = new StudioLoadingBar();
 		shellLayout.SuspendLayout();
 		headerPanel.SuspendLayout();
 		((System.ComponentModel.ISupportInitialize)brandIcon).BeginInit();
@@ -163,6 +165,7 @@ partial class MainForm
 		footerPanel.Controls.Add(statusLabel);
 		footerPanel.Controls.Add(busyProgress);
 		footerPanel.Controls.Add(modeLabel);
+		footerPanel.Controls.Add(toolLoadingProgress);
 		footerPanel.Dock = DockStyle.Fill;
 		footerPanel.Location = new Point(0, 804);
 		footerPanel.Margin = Padding.Empty;
@@ -191,6 +194,12 @@ partial class MainForm
 		modeLabel.TabIndex = 2;
 		modeLabel.Text = "LOCAL AUTHORING READY  •  WINGETCREATE OPTIONAL";
 		modeLabel.TextAlign = ContentAlignment.MiddleRight;
+		toolLoadingProgress.Dock = DockStyle.Bottom;
+		toolLoadingProgress.Location = new Point(0, 31);
+		toolLoadingProgress.Name = "toolLoadingProgress";
+		toolLoadingProgress.Size = new Size(1278, 3);
+		toolLoadingProgress.TabIndex = 3;
+		toolLoadingProgress.Visible = false;
 		AutoScaleDimensions = new SizeF(7F, 15F);
 		AutoScaleMode = AutoScaleMode.Font;
 		BackColor = StudioPalette.Border;

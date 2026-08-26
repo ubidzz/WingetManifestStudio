@@ -705,3 +705,41 @@ internal sealed class StudioBusyIndicator : Control
 		base.Dispose(disposing);
 	}
 }
+
+internal sealed class StudioLoadingBar : Control
+{
+	private readonly System.Windows.Forms.Timer timer = new() { Interval = 24 };
+	private int position;
+
+	public StudioLoadingBar()
+	{
+		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+			ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+		Height = 3;
+		timer.Tick += (_, _) =>
+		{
+			position = (position + 10) % Math.Max(1, Width + Math.Max(80, Width / 5));
+			Invalidate();
+		};
+		VisibleChanged += (_, _) =>
+		{
+			if (Visible) timer.Start();
+			else timer.Stop();
+		};
+	}
+
+	protected override void OnPaint(PaintEventArgs eventArgs)
+	{
+		eventArgs.Graphics.Clear(StudioPalette.Border);
+		int segmentWidth = Math.Max(80, Width / 5);
+		int x = position - segmentWidth;
+		using SolidBrush accent = new(StudioPalette.Accent);
+		eventArgs.Graphics.FillRectangle(accent, x, 0, segmentWidth, Height);
+	}
+
+	protected override void Dispose(bool disposing)
+	{
+		if (disposing) timer.Dispose();
+		base.Dispose(disposing);
+	}
+}

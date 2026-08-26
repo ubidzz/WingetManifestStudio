@@ -1,10 +1,15 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 
 namespace ManifestUpdater;
 
 internal static class WingetCommandService
 {
+	private const string GitHubCredentialTarget = "winget-create:GitHub [repo]";
+	private const uint GenericCredentialType = 1;
+
 	private static readonly HashSet<string> InteractiveCommands = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"new",
@@ -13,6 +18,32 @@ internal static class WingetCommandService
 		"submit",
 		"token"
 	};
+
+	[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CredReadW")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool CredRead(
+		string target,
+		uint type,
+		int flags,
+		out IntPtr credential);
+
+	[DllImport("advapi32.dll", SetLastError = true)]
+	private static extern void CredFree(IntPtr credential);
+
+	public static bool IsGitHubTokenStored()
+	{
+		if (!OperatingSystem.IsWindows()) return false;
+
+		IntPtr credential = IntPtr.Zero;
+		try
+		{
+			return CredRead(GitHubCredentialTarget, GenericCredentialType, 0, out credential);
+		}
+		finally
+		{
+			if (credential != IntPtr.Zero) CredFree(credential);
+		}
+	}
 
 	public static bool RequiresInteractiveConsole(string command, string arguments)
 	{
@@ -24,19 +55,52 @@ internal static class WingetCommandService
 
 	public static int StartWingetCreateInteractive(string command, string arguments, string workingDirectory)
 	{
-		ProcessStartInfo startInfo = new()
-		{
-			FileName = "wingetcreate",
-			WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : Environment.CurrentDirectory,
-			UseShellExecute = true,
-			WindowStyle = ProcessWindowStyle.Normal
-		};
-		startInfo.ArgumentList.Add(command);
-		foreach (string argument in Tokenize(arguments)) startInfo.ArgumentList.Add(argument);
-
+		ProcessStartInfo startInfo = CreateInteractiveProcessStartInfo(command, arguments, workingDirectory);
 		using Process process = Process.Start(startInfo)
 			?? throw new InvalidOperationException("Windows could not start WingetCreate in an interactive console.");
 		return process.Id;
+	}
+
+	internal static ProcessStartInfo CreateInteractiveProcessStartInfo(string command, string arguments, string workingDirectory)
+	{
+		List<string> wingetCreateArguments = [command];
+		wingetCreateArguments.AddRange(Tokenize(arguments));
+
+		const string consoleScript = """
+			$ErrorActionPreference = 'Continue'
+			$wingetArguments = @((ConvertFrom-Json -InputObject $env:WMS_WINGETCREATE_ARGUMENTS))
+			$host.UI.RawUI.WindowTitle = 'Winget Manifest Studio - WingetCreate'
+			Write-Host ('> wingetcreate ' + ($wingetArguments -join ' ')) -ForegroundColor Cyan
+			Write-Host ''
+			& wingetcreate @wingetArguments
+			$wingetExitCode = $LASTEXITCODE
+			Write-Host ''
+			if ($wingetExitCode -eq 0) {
+				Write-Host 'WingetCreate completed successfully.' -ForegroundColor Green
+			} else {
+				Write-Host ('WingetCreate exited with code ' + $wingetExitCode + '.') -ForegroundColor Red
+			}
+			Write-Host 'This window is staying open so you can read the result.' -ForegroundColor Yellow
+			[void](Read-Host 'Press Enter to close')
+			exit $wingetExitCode
+			""";
+		string encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(consoleScript));
+		ProcessStartInfo startInfo = new()
+		{
+			FileName = "powershell.exe",
+			WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : Environment.CurrentDirectory,
+			UseShellExecute = false,
+			CreateNoWindow = false,
+			WindowStyle = ProcessWindowStyle.Normal
+		};
+		startInfo.ArgumentList.Add("-NoLogo");
+		startInfo.ArgumentList.Add("-NoProfile");
+		startInfo.ArgumentList.Add("-ExecutionPolicy");
+		startInfo.ArgumentList.Add("Bypass");
+		startInfo.ArgumentList.Add("-EncodedCommand");
+		startInfo.ArgumentList.Add(encodedScript);
+		startInfo.Environment["WMS_WINGETCREATE_ARGUMENTS"] = JsonSerializer.Serialize(wingetCreateArguments);
+		return startInfo;
 	}
 
 	public static async Task<CommandResult> RunWingetCreateAsync(
@@ -66,6 +130,28 @@ internal static class WingetCommandService
 		try
 		{
 			CommandResult result = await RunAsync("where.exe", [executable], Environment.CurrentDirectory, cancellation.Token);
+			return result.ExitCode == 0;
+		}
+		catch (OperationCanceledException)
+		{
+			return false;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	public static async Task<bool> WarmUpAsync(TimeSpan? timeout = null)
+	{
+		using CancellationTokenSource cancellation = new(timeout ?? TimeSpan.FromSeconds(20));
+		try
+		{
+			CommandResult result = await RunWingetCreateAsync(
+				"info",
+				string.Empty,
+				Environment.CurrentDirectory,
+				cancellation.Token);
 			return result.ExitCode == 0;
 		}
 		catch (OperationCanceledException)
