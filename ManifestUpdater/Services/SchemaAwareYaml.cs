@@ -38,7 +38,7 @@ internal static class SchemaAwareYaml
 
 	public static ManifestProject LoadProject(string folder, long maximumBytes)
 	{
-		List<ManifestDocument> documents = LoadDocuments(folder, maximumBytes);
+		List<ManifestDocument> documents = LoadSelectedDocuments(folder, maximumBytes, out string manifestFolder);
 		if (documents.Count == 0)
 			return new ManifestProject { ManifestFolder = folder };
 
@@ -51,7 +51,7 @@ internal static class SchemaAwareYaml
 
 		ManifestProject project = new()
 		{
-			ManifestFolder = folder,
+			ManifestFolder = manifestFolder,
 			PackageIdentifier = FirstValue("PackageIdentifier", versionRoot, localeRoot, installerRoot),
 			PackageVersion = FirstValue("PackageVersion", versionRoot, localeRoot, installerRoot),
 			DefaultLocale = Value(versionRoot, "DefaultLocale").IfEmpty(Value(localeRoot, "PackageLocale")).IfEmpty("en-US"),
@@ -443,6 +443,78 @@ internal static class SchemaAwareYaml
 		project.SwitchUpgrade = Value(switches, "Upgrade");
 		project.CustomInstallerSwitch = Value(switches, "Custom");
 		project.SwitchRepair = Value(switches, "Repair");
+	}
+
+	private static List<ManifestDocument> LoadSelectedDocuments(string folder, long maximumBytes, out string manifestFolder)
+	{
+		manifestFolder = folder;
+		List<ManifestDocument> directDocuments = LoadDocuments(folder, maximumBytes);
+		if (directDocuments.Count > 0 || string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+			return directDocuments;
+
+		Dictionary<string, List<ManifestDocument>> documentsByFolder = new(StringComparer.OrdinalIgnoreCase);
+		EnumerationOptions options = new()
+		{
+			RecurseSubdirectories = true,
+			IgnoreInaccessible = true,
+			AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System
+		};
+		int inspectedYamlFiles = 0;
+		foreach (string path in Directory.EnumerateFiles(folder, "*.*", options))
+		{
+			string extension = Path.GetExtension(path);
+			if (!extension.Equals(".yaml", StringComparison.OrdinalIgnoreCase) &&
+				!extension.Equals(".yml", StringComparison.OrdinalIgnoreCase))
+				continue;
+			if (IsIgnoredDiscoveryPath(folder, path)) continue;
+			if (++inspectedYamlFiles > 5000)
+				throw new InvalidDataException("This folder contains too many YAML files to search safely. Choose the package or version folder that contains the Winget manifests.");
+
+			ManifestDocument? document;
+			try { document = ParseManifestDocument(path, maximumBytes); }
+			catch (InvalidDataException) { continue; }
+			if (document is null) continue;
+			string documentFolder = Path.GetDirectoryName(path) ?? folder;
+			if (!documentsByFolder.TryGetValue(documentFolder, out List<ManifestDocument>? group))
+			{
+				group = [];
+				documentsByFolder[documentFolder] = group;
+			}
+			group.Add(document);
+		}
+
+		List<KeyValuePair<string, List<ManifestDocument>>> candidates = documentsByFolder.ToList();
+		if (candidates.Count == 0) return directDocuments;
+		if (candidates.Count == 1)
+		{
+			manifestFolder = candidates[0].Key;
+			return candidates[0].Value;
+		}
+
+		List<KeyValuePair<string, List<ManifestDocument>>> completeCandidates = candidates
+			.Where(candidate => candidate.Value.Any(document => document.Type.Equals("version", StringComparison.OrdinalIgnoreCase))
+				&& candidate.Value.Any(document => document.Type.Equals("defaultLocale", StringComparison.OrdinalIgnoreCase))
+				&& candidate.Value.Any(document => document.Type.Equals("installer", StringComparison.OrdinalIgnoreCase)))
+			.ToList();
+		if (completeCandidates.Count == 1)
+		{
+			manifestFolder = completeCandidates[0].Key;
+			return completeCandidates[0].Value;
+		}
+
+		IEnumerable<KeyValuePair<string, List<ManifestDocument>>> shownCandidates = completeCandidates.Count > 0 ? completeCandidates : candidates;
+		string choices = string.Join(Environment.NewLine, shownCandidates.Take(6)
+			.Select(candidate => "• " + Path.GetRelativePath(folder, candidate.Key)));
+		if (shownCandidates.Count() > 6) choices += Environment.NewLine + "• ...";
+		throw new InvalidDataException("More than one Winget manifest set was found. Choose the specific package or version folder you want to edit:" + Environment.NewLine + Environment.NewLine + choices);
+	}
+
+	private static bool IsIgnoredDiscoveryPath(string root, string path)
+	{
+		string relative = Path.GetRelativePath(root, path);
+		return relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+			.Any(part => part.Equals(".manifest-backups", StringComparison.OrdinalIgnoreCase)
+				|| part.Equals(".git", StringComparison.OrdinalIgnoreCase));
 	}
 
 	private static List<ManifestDocument> LoadDocuments(string folder, long maximumBytes)

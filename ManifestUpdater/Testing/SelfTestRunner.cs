@@ -13,6 +13,7 @@ internal static class SelfTestRunner
 			Directory.CreateDirectory(root);
 			TestNewProject(root, results);
 			TestPreservingUpdate(root, results);
+			TestNestedManifestDiscovery(root, results);
 			TestStructuralReorderAndExtraLocale(root, results);
 			TestAdvancedSchemaFields(root, results);
 			TestCleanValidationFolder(root, results);
@@ -128,6 +129,28 @@ ManifestVersion: 1.12.0
 		Assert(french.Contains("PackageVersion: 1.1.0", StringComparison.Ordinal) && french.Contains("KeepFrench", StringComparison.Ordinal),
 			"Additional locale versions and unknown nested fields must be preserved.");
 		results.Add("PASS: structural YAML preservation, identity matching, and additional locales.");
+	}
+
+	private static void TestNestedManifestDiscovery(string root, List<string> results)
+	{
+		string selectedFolder = Path.Combine(root, "nested-selection");
+		string manifestFolder = Path.Combine(selectedFolder, "Contoso.Sample", "1.0.0");
+		ManifestProject source = SampleProject(manifestFolder);
+		ManifestGenerationResult generated = ManifestService.Generate(source);
+		ManifestService.Save(source, generated);
+
+		string backupFolder = Path.Combine(manifestFolder, ".manifest-backups", "older");
+		Directory.CreateDirectory(backupFolder);
+		foreach (string path in Directory.GetFiles(manifestFolder, "*.yaml", SearchOption.TopDirectoryOnly))
+			File.Copy(path, Path.Combine(backupFolder, Path.GetFileName(path)));
+
+		ManifestProject loaded = ManifestService.LoadProject(selectedFolder);
+		Assert(loaded.LoadedFromExistingManifests, "Selecting a parent folder must find its single nested Winget manifest set.");
+		Assert(loaded.PackageIdentifier == source.PackageIdentifier && loaded.PackageVersion == source.PackageVersion,
+			"Nested manifest discovery must populate the package identity.");
+		Assert(Path.GetFullPath(loaded.ManifestFolder) == Path.GetFullPath(manifestFolder),
+			"The project output folder must resolve to the folder that actually contains the YAML files.");
+		results.Add("PASS: parent-folder manifest discovery ignores backup copies and loads the real YAML set.");
 	}
 
 	private static void TestAdvancedSchemaFields(string root, List<string> results)

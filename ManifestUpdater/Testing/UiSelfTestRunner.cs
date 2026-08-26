@@ -5,7 +5,11 @@ internal static class UiSelfTestRunner
 	public static Task<int> RunStartupProbeAsync()
 	{
 		System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
-		using MainForm form = new(uiTestMode: true);
+		using MainForm form = new();
+		form.ShowInTaskbar = false;
+		form.Opacity = 0.01;
+		form.StartPosition = FormStartPosition.Manual;
+		form.Location = new Point(-32000, -32000);
 		form.Shown += (_, _) =>
 		{
 			timer.Stop();

@@ -60,6 +60,8 @@ public partial class MainForm : Form
 	private string simplePreviewText = string.Empty;
 	private string technicalPreviewText = string.Empty;
 	private bool showingTechnicalPreview;
+	private bool workspaceInitialized;
+	private bool applyingProjectToControls;
 
 	public MainForm() : this(false)
 	{
@@ -89,17 +91,68 @@ public partial class MainForm : Form
 		AttachWindowDrag(subtitleLabel);
 		if (System.ComponentModel.LicenseManager.UsageMode != System.ComponentModel.LicenseUsageMode.Designtime)
 		{
-			SuspendLayout();
-			workspaceTabs.SuspendLayout();
-			BuildWorkspace();
-			WireReadinessTracking();
-			workspaceTabs.ResumeLayout(true);
-			ResumeLayout(true);
+			if (uiTestMode)
+				InitializeWorkspaceControls();
+			else
+			{
+				modeLabel.Text = "OPENING WORKSPACE";
+				statusLabel.Text = "Opening Winget Manifest Studio...";
+				busyProgress.Visible = true;
+				toolLoadingProgress.Visible = true;
+			}
 			Shown += MainForm_Shown;
 		}
 	}
 
 	private void MainForm_Shown(object? sender, EventArgs e)
+	{
+		if (!uiTestMode && !workspaceInitialized)
+		{
+			// Let Windows paint the lightweight designer shell before constructing the
+			// larger editor pages. The application therefore becomes visible immediately.
+			Refresh();
+			BeginInvoke(new Action(CompleteStartupAfterFirstPaint));
+			return;
+		}
+
+		CompleteStartup();
+	}
+
+	private void CompleteStartupAfterFirstPaint()
+	{
+		if (IsDisposed || Disposing) return;
+		try
+		{
+			InitializeWorkspaceControls();
+			CompleteStartup();
+		}
+		catch (Exception ex)
+		{
+			busyProgress.Visible = false;
+			toolLoadingProgress.Visible = false;
+			ShowError("Startup could not finish", ex);
+		}
+	}
+
+	private void InitializeWorkspaceControls()
+	{
+		if (workspaceInitialized) return;
+		SuspendLayout();
+		workspaceTabs.SuspendLayout();
+		try
+		{
+			BuildWorkspace();
+			WireReadinessTracking();
+			workspaceInitialized = true;
+		}
+		finally
+		{
+			workspaceTabs.ResumeLayout(true);
+			ResumeLayout(true);
+		}
+	}
+
+	private void CompleteStartup()
 	{
 		try
 		{
@@ -113,6 +166,7 @@ public partial class MainForm : Form
 			}
 
 			modeLabel.Text = "LOCAL AUTHORING READY • WINGETCREATE STARTING SHORTLY";
+			busyProgress.Visible = false;
 			toolLoadingProgress.Visible = false;
 			SetStatus("Manifest Studio is ready. WingetCreate official tools will load shortly in the background.");
 			ScheduleToolAvailabilityCheck();
@@ -721,6 +775,8 @@ public partial class MainForm : Form
 		{
 			SetBusy(true, "Reading manifest files...");
 			ManifestProject loadedProject = await Task.Run(() => ManifestService.LoadProject(selectedPath), operationCancellation!.Token);
+			if (!loadedProject.LoadedFromExistingManifests)
+				throw new InvalidDataException("No Winget manifest YAML files were found. Choose the package or version folder that contains the version, installer, and locale YAML files.");
 			project = loadedProject;
 			ApplyProjectToControls();
 			StudioStateStore.AddRecentFolder(selectedPath);
@@ -1910,68 +1966,76 @@ public partial class MainForm : Form
 
 	private void ApplyProjectToControls()
 	{
-		project.EnsureInstallerCollection();
-		Write("PackageIdentifier", project.PackageIdentifier);
-		Write("PackageVersion", project.PackageVersion);
-		Write("DefaultLocale", project.DefaultLocale);
-		Write("ManifestVersion", project.ManifestVersion);
-		Write("ManifestFolder", project.ManifestFolder);
-		Write("Publisher", project.Publisher);
-		Write("PublisherUrl", project.PublisherUrl);
-		Write("PublisherSupportUrl", project.PublisherSupportUrl);
-		Write("PrivacyUrl", project.PrivacyUrl);
-		Write("Author", project.Author);
-		Write("PackageName", project.PackageName);
-		Write("PackageUrl", project.PackageUrl);
-		Write("License", project.License);
-		Write("LicenseUrl", project.LicenseUrl);
-		Write("Copyright", project.Copyright);
-		Write("CopyrightUrl", project.CopyrightUrl);
-		Write("PurchaseUrl", project.PurchaseUrl);
-		Write("ShortDescription", project.ShortDescription);
-		Write("Description", project.Description);
-		Write("Moniker", project.Moniker);
-		Write("Tags", project.Tags);
-		Write("Commands", project.Commands);
-		Write("ReleaseNotes", project.ReleaseNotes);
-		Write("ReleaseNotesUrl", project.ReleaseNotesUrl);
-		Write("InstallationNotes", project.InstallationNotes);
-		Write("Channel", project.Channel);
-		Write("InstallerLocale", project.InstallerLocale);
-		Write("Platform", project.Platform);
-		Write("MinimumOSVersion", project.MinimumOSVersion);
-		Write("InstallerType", project.InstallerType);
-		Write("NestedInstallerType", project.NestedInstallerType);
-		Write("Scope", project.Scope);
-		Write("InstallModes", project.InstallModes);
-		Write("UpgradeBehavior", project.UpgradeBehavior);
-		Write("ElevationRequirement", project.ElevationRequirement);
-		Write("SwitchSilent", project.SwitchSilent);
-		Write("SwitchSilentWithProgress", project.SwitchSilentWithProgress);
-		Write("SwitchInteractive", project.SwitchInteractive);
-		Write("SwitchInstallLocation", project.SwitchInstallLocation);
-		Write("SwitchLog", project.SwitchLog);
-		Write("SwitchUpgrade", project.SwitchUpgrade);
-		Write("CustomInstallerSwitch", project.CustomInstallerSwitch);
-		Write("SwitchRepair", project.SwitchRepair);
-		Write("Protocols", project.Protocols);
-		Write("FileExtensions", project.FileExtensions);
-		Write("UnsupportedOSArchitectures", project.UnsupportedOSArchitectures);
-		Write("InstallerSuccessCodes", project.InstallerSuccessCodes);
-		Write("PackageFamilyName", project.PackageFamilyName);
-		Write("ReleaseDate", project.ReleaseDate);
-		Write("RepairBehavior", project.RepairBehavior);
-		Write("InstallerAbortsTerminal", project.InstallerAbortsTerminal);
-		Write("InstallLocationRequired", project.InstallLocationRequired);
-		Write("RequireExplicitUpgrade", project.RequireExplicitUpgrade);
-		Write("DisplayInstallWarnings", project.DisplayInstallWarnings);
-		Write("DownloadCommandProhibited", project.DownloadCommandProhibited);
-		Write("ArchiveBinariesDependOnPath", project.ArchiveBinariesDependOnPath);
-		Write("AdvancedLocaleFieldsYaml", project.AdvancedLocaleFieldsYaml);
-		Write("AdvancedInstallerFieldsYaml", project.AdvancedInstallerFieldsYaml);
-		insecureUrlCheck.Checked = project.AllowInsecureUrls;
-		installerGrid.DataSource = project.Installers;
-		TrackInstallerChanges();
+		applyingProjectToControls = true;
+		try
+		{
+			project.EnsureInstallerCollection();
+			Write("PackageIdentifier", project.PackageIdentifier);
+			Write("PackageVersion", project.PackageVersion);
+			Write("DefaultLocale", project.DefaultLocale);
+			Write("ManifestVersion", project.ManifestVersion);
+			Write("ManifestFolder", project.ManifestFolder);
+			Write("Publisher", project.Publisher);
+			Write("PublisherUrl", project.PublisherUrl);
+			Write("PublisherSupportUrl", project.PublisherSupportUrl);
+			Write("PrivacyUrl", project.PrivacyUrl);
+			Write("Author", project.Author);
+			Write("PackageName", project.PackageName);
+			Write("PackageUrl", project.PackageUrl);
+			Write("License", project.License);
+			Write("LicenseUrl", project.LicenseUrl);
+			Write("Copyright", project.Copyright);
+			Write("CopyrightUrl", project.CopyrightUrl);
+			Write("PurchaseUrl", project.PurchaseUrl);
+			Write("ShortDescription", project.ShortDescription);
+			Write("Description", project.Description);
+			Write("Moniker", project.Moniker);
+			Write("Tags", project.Tags);
+			Write("Commands", project.Commands);
+			Write("ReleaseNotes", project.ReleaseNotes);
+			Write("ReleaseNotesUrl", project.ReleaseNotesUrl);
+			Write("InstallationNotes", project.InstallationNotes);
+			Write("Channel", project.Channel);
+			Write("InstallerLocale", project.InstallerLocale);
+			Write("Platform", project.Platform);
+			Write("MinimumOSVersion", project.MinimumOSVersion);
+			Write("InstallerType", project.InstallerType);
+			Write("NestedInstallerType", project.NestedInstallerType);
+			Write("Scope", project.Scope);
+			Write("InstallModes", project.InstallModes);
+			Write("UpgradeBehavior", project.UpgradeBehavior);
+			Write("ElevationRequirement", project.ElevationRequirement);
+			Write("SwitchSilent", project.SwitchSilent);
+			Write("SwitchSilentWithProgress", project.SwitchSilentWithProgress);
+			Write("SwitchInteractive", project.SwitchInteractive);
+			Write("SwitchInstallLocation", project.SwitchInstallLocation);
+			Write("SwitchLog", project.SwitchLog);
+			Write("SwitchUpgrade", project.SwitchUpgrade);
+			Write("CustomInstallerSwitch", project.CustomInstallerSwitch);
+			Write("SwitchRepair", project.SwitchRepair);
+			Write("Protocols", project.Protocols);
+			Write("FileExtensions", project.FileExtensions);
+			Write("UnsupportedOSArchitectures", project.UnsupportedOSArchitectures);
+			Write("InstallerSuccessCodes", project.InstallerSuccessCodes);
+			Write("PackageFamilyName", project.PackageFamilyName);
+			Write("ReleaseDate", project.ReleaseDate);
+			Write("RepairBehavior", project.RepairBehavior);
+			Write("InstallerAbortsTerminal", project.InstallerAbortsTerminal);
+			Write("InstallLocationRequired", project.InstallLocationRequired);
+			Write("RequireExplicitUpgrade", project.RequireExplicitUpgrade);
+			Write("DisplayInstallWarnings", project.DisplayInstallWarnings);
+			Write("DownloadCommandProhibited", project.DownloadCommandProhibited);
+			Write("ArchiveBinariesDependOnPath", project.ArchiveBinariesDependOnPath);
+			Write("AdvancedLocaleFieldsYaml", project.AdvancedLocaleFieldsYaml);
+			Write("AdvancedInstallerFieldsYaml", project.AdvancedInstallerFieldsYaml);
+			insecureUrlCheck.Checked = project.AllowInsecureUrls;
+			installerGrid.DataSource = project.Installers;
+			TrackInstallerChanges();
+		}
+		finally
+		{
+			applyingProjectToControls = false;
+		}
 		RefreshReadiness();
 	}
 
@@ -2021,7 +2085,7 @@ public partial class MainForm : Form
 
 	private void RefreshReadiness()
 	{
-		if (refreshingReadiness || readinessLabel is null || readinessLabel.IsDisposed || fields.Count == 0) return;
+		if (applyingProjectToControls || refreshingReadiness || readinessLabel is null || readinessLabel.IsDisposed || fields.Count == 0) return;
 		refreshingReadiness = true;
 		try
 		{
@@ -2546,6 +2610,36 @@ public partial class MainForm : Form
 				Record(checkBox.Checked != original, $"Custom checkbox: {checkBox.Text}");
 				checkBox.Checked = original;
 			}
+
+			ManifestProject importedProject = new()
+			{
+				PackageIdentifier = "Contoso.Imported",
+				PackageVersion = "9.8.7",
+				DefaultLocale = "en-US",
+				ManifestVersion = "1.12.0",
+				ManifestFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudioImportedUiTest"),
+				Publisher = "Contoso Publisher",
+				PackageName = "Imported Package",
+				License = "MIT",
+				ShortDescription = "Loaded from existing YAML"
+			};
+			importedProject.Installers.Add(new InstallerArtifact
+			{
+				InstallerUrl = "https://example.invalid/Imported.msi",
+				Architecture = "x64",
+				InstallerType = "msi",
+				Sha256 = new string('C', 64)
+			});
+			project = importedProject;
+			ApplyProjectToControls();
+			Record(
+				Read("PackageIdentifier") == "Contoso.Imported"
+					&& Read("PackageVersion") == "9.8.7"
+					&& Read("Publisher") == "Contoso Publisher"
+					&& Read("PackageName") == "Imported Package"
+					&& Read("ShortDescription") == "Loaded from existing YAML"
+					&& installerGrid.Rows.Count == 1,
+				"Loaded YAML values populate every package field and installer row");
 
 			project.Installers.Clear();
 			InstallerArtifact gridItem = new()
