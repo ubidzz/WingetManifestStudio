@@ -3,14 +3,16 @@ namespace ManifestUpdater;
 internal static class Program
 {
 	[STAThread]
-	private static async Task<int> Main(string[] args)
+	private static int Main(string[] args)
 	{
 		if (args.Any(argument => string.Equals(argument, "--self-test", StringComparison.OrdinalIgnoreCase)))
-			return await SelfTestRunner.RunAsync(args);
+			return SelfTestRunner.RunAsync(args).GetAwaiter().GetResult();
 
 		ApplicationConfiguration.Initialize();
+		if (args.Any(argument => string.Equals(argument, "--startup-probe", StringComparison.OrdinalIgnoreCase)))
+			return UiSelfTestRunner.RunStartupProbeAsync().GetAwaiter().GetResult();
 		if (args.Any(argument => string.Equals(argument, "--ui-self-test", StringComparison.OrdinalIgnoreCase)))
-			return await UiSelfTestRunner.RunAsync();
+			return UiSelfTestRunner.RunAsync().GetAwaiter().GetResult();
 		Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
 		Application.ThreadException += (_, eventArgs) => ShowRecoveredError(eventArgs.Exception, "Windows interface event");
 		AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>

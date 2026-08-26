@@ -6,17 +6,36 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ApplicationIcon>ManifestUpdater.ico</ApplicationIcon>
+    <NuGetAudit>false</NuGetAudit>
+    <ApplicationIcon>Assets\ManifestUpdater.ico</ApplicationIcon>
     <AssemblyName>WingetManifestStudio</AssemblyName>
     <Product>Winget Manifest Studio</Product>
     <Title>Winget Manifest Studio</Title>
     <Description>Create, update, inspect, validate, and submit Windows Package Manager manifests.</Description>
     <Company>ubidzz</Company>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <InformationalVersion>$(Version)</InformationalVersion>
+    <StudioSigningCertificateThumbprint Condition="'$(StudioSigningCertificateThumbprint)' == ''">$(WMS_SIGNING_CERTIFICATE_THUMBPRINT)</StudioSigningCertificateThumbprint>
+    <StudioTimestampUrl Condition="'$(StudioTimestampUrl)' == ''">http://timestamp.digicert.com</StudioTimestampUrl>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="UI\MainForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="UI\MainForm.Designer.cs">
+      <DependentUpon>MainForm.cs</DependentUpon>
+    </Compile>
+    <EmbeddedResource Update="UI\MainForm.resx">
+      <DependentUpon>MainForm.cs</DependentUpon>
+    </EmbeddedResource>
+  </ItemGroup>
 
   <Target Name="BuildMsiAfterPublish"
           AfterTargets="Publish"
@@ -32,18 +51,36 @@
       <_StudioDotNetHost Condition="'$(DotNetHostPath)' != ''">$(DotNetHostPath)</_StudioDotNetHost>
       <_StudioDotNetHost Condition="'$(_StudioDotNetHost)' == '' and '$(ProgramW6432)' != ''">$([System.IO.Path]::Combine('$(ProgramW6432)', 'dotnet', 'dotnet.exe'))</_StudioDotNetHost>
       <_StudioDotNetHost Condition="'$(_StudioDotNetHost)' == ''">$([System.IO.Path]::Combine('$(ProgramFiles)', 'dotnet', 'dotnet.exe'))</_StudioDotNetHost>
+      <_StudioSignTool Condition="'$(StudioSignToolPath)' != ''">$(StudioSignToolPath)</_StudioSignTool>
+      <_StudioSignTool Condition="'$(_StudioSignTool)' == '' and '$(WindowsSdkVerBinPath)' != ''">$([System.IO.Path]::Combine('$(WindowsSdkVerBinPath)', 'x64', 'signtool.exe'))</_StudioSignTool>
+      <_StudioSigningEnabled Condition="'$(StudioSigningCertificateThumbprint)' != ''">true</_StudioSigningEnabled>
+      <_StudioSigningEnabled Condition="'$(_StudioSigningEnabled)' == ''">false</_StudioSigningEnabled>
     </PropertyGroup>
 
     <Error Condition="!Exists('$(_StudioPublishedExe)')" Text="The published Winget Manifest Studio executable was not found at $(_StudioPublishedExe)." />
     <Error Condition="!Exists('$(_StudioMsiProject)')" Text="The Winget Manifest Studio MSI project was not found at $(_StudioMsiProject)." />
     <Error Condition="!Exists('$(_StudioDotNetHost)')" Text="The 64-bit .NET host was not found at $(_StudioDotNetHost). Repair the Visual Studio .NET SDK before publishing." />
+    <Error Condition="'$(_StudioSigningEnabled)' == 'true' and !Exists('$(_StudioSignTool)')" Text="Artifact signing was requested, but signtool.exe was not found. Set StudioSignToolPath to the Windows SDK x64 signtool.exe." />
+
+    <Message Condition="'$(_StudioSigningEnabled)' != 'true'" Text="Winget Manifest Studio will be published unsigned. Set the WMS_SIGNING_CERTIFICATE_THUMBPRINT environment variable to a code-signing certificate with a private key to sign the EXE and MSI." Importance="high" />
+    <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing WingetManifestStudio.exe with certificate $(StudioSigningCertificateThumbprint)..." Importance="high" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
+      Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioPublishedExe)&quot;" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
+      Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioPublishedExe)&quot;" />
 
     <Message Text="Building SynixStudioSetup.msi with Version $(Version)..." Importance="high" />
+    <Delete Files="$(_StudioMsiBuildOutput)" Condition="Exists('$(_StudioMsiBuildOutput)')" />
     <Exec
-      Command="&quot;$(_StudioDotNetHost)&quot; build &quot;$(_StudioMsiProject)&quot; --configuration Release --nologo &quot;-p:Version=$(Version)&quot; &quot;-p:StudioPublishDir=$(_StudioPublishDirectory)&quot; &quot;-p:StudioProjectDir=$(MSBuildProjectDirectory)&quot; &quot;-p:StudioAssemblyName=$(AssemblyName)&quot;"
+      Command="&quot;$(_StudioDotNetHost)&quot; build &quot;$(_StudioMsiProject)&quot; --configuration Release --no-incremental --nologo &quot;-p:Version=$(Version)&quot; &quot;-p:StudioPublishDir=$(_StudioPublishDirectory)&quot; &quot;-p:StudioProjectDir=$(MSBuildProjectDirectory)&quot; &quot;-p:StudioAssemblyName=$(AssemblyName)&quot;"
       WorkingDirectory="$(MSBuildProjectDirectory)" />
 
     <Error Condition="!Exists('$(_StudioMsiBuildOutput)')" Text="WiX did not create $(_StudioMsiBuildOutput)." />
+    <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing SynixStudioSetup.msi..." Importance="high" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
+      Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioMsiBuildOutput)&quot;" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
+      Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioMsiBuildOutput)&quot;" />
     <Delete Files="$(_StudioMsiOutput)" Condition="Exists('$(_StudioMsiOutput)')" />
     <Copy SourceFiles="$(_StudioMsiBuildOutput)" DestinationFiles="$(_StudioMsiOutput)" />
     <Error Condition="!Exists('$(_StudioMsiOutput)')" Text="The MSI was not copied to $(_StudioMsiOutput)." />

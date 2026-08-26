@@ -44,6 +44,7 @@ internal static class InstallerInspector
 			string version = string.Empty;
 			string displayName = string.Empty;
 			string publisher = string.Empty;
+			string signatureSha256 = string.Empty;
 
 			if (extension == ".msi")
 			{
@@ -57,6 +58,7 @@ internal static class InstallerInspector
 			else if (extension is ".msix" or ".appx" or ".msixbundle" or ".appxbundle")
 			{
 				ReadAppPackageMetadata(inspectionPath, ref architecture, ref version, ref displayName, ref publisher);
+				signatureSha256 = await CalculateAppPackageSignatureSha256Async(inspectionPath, cancellationToken);
 			}
 			else if (extension == ".exe")
 			{
@@ -66,6 +68,8 @@ internal static class InstallerInspector
 				publisher = info.CompanyName ?? string.Empty;
 			}
 
+			progress?.Report($"Checking the digital signature on {Path.GetFileName(inspectionPath)}...");
+			AuthenticodeInspection signature = AuthenticodeInspector.Inspect(inspectionPath);
 			return new InstallerInspection(
 				sha256,
 				architecture,
@@ -75,7 +79,9 @@ internal static class InstallerInspector
 				version ?? string.Empty,
 				displayName ?? string.Empty,
 				publisher ?? string.Empty,
-				new FileInfo(inspectionPath).Length);
+				new FileInfo(inspectionPath).Length,
+				signature,
+				signatureSha256);
 		}
 		finally
 		{
@@ -89,6 +95,17 @@ internal static class InstallerInspector
 	private static async Task<string> CalculateSha256Async(string path, CancellationToken cancellationToken)
 	{
 		await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, true);
+		byte[] hash = await SHA256.HashDataAsync(stream, cancellationToken);
+		return Convert.ToHexString(hash);
+	}
+
+	private static async Task<string> CalculateAppPackageSignatureSha256Async(string path, CancellationToken cancellationToken)
+	{
+		using ZipArchive archive = ZipFile.OpenRead(path);
+		ZipArchiveEntry? signature = archive.Entries.FirstOrDefault(entry =>
+			entry.FullName.EndsWith("AppxSignature.p7x", StringComparison.OrdinalIgnoreCase));
+		if (signature is null) return string.Empty;
+		await using Stream stream = signature.Open();
 		byte[] hash = await SHA256.HashDataAsync(stream, cancellationToken);
 		return Convert.ToHexString(hash);
 	}

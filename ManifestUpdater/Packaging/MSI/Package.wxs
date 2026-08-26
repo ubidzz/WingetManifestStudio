@@ -16,7 +16,7 @@
 
     <Icon
       Id="StudioIcon.ico"
-      SourceFile="$(var.StudioProjectDir)\ManifestUpdater.ico" />
+      SourceFile="$(var.StudioProjectDir)\Assets\ManifestUpdater.ico" />
     <Property Id="ARPPRODUCTICON" Value="StudioIcon.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/ubidzz" />
     <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
@@ -72,8 +72,19 @@
     <StandardDirectory Id="ProgramMenuFolder" />
     <StandardDirectory Id="DesktopFolder" />
 
+	<ComponentGroup Id="StudioPublishedFiles" Directory="INSTALLFOLDER">
+		<Files Include="$(var.StudioPublishDir)\**">
+			<Exclude Files="$(var.StudioPublishDir)\$(var.StudioAssemblyName).exe" />
+			<Exclude Files="$(var.StudioPublishDir)\**\*.pdb" />
+			<Exclude Files="$(var.StudioPublishDir)\**\*.msi" />
+			<Exclude Files="$(var.StudioPublishDir)\**\*-report.txt" />
+			<Exclude Files="$(var.StudioPublishDir)\**\startup-probe.txt" />
+		</Files>
+	</ComponentGroup>
+
     <Feature Id="StudioFeature" Title="Winget Manifest Studio">
       <ComponentRef Id="StudioProgram" />
+	  <ComponentGroupRef Id="StudioPublishedFiles" />
     </Feature>
   </Package>
 </Wix>

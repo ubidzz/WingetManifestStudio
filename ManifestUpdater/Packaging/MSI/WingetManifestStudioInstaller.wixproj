@@ -13,7 +13,7 @@
   <Target Name="ValidateMsiInputs" BeforeTargets="Build">
     <PropertyGroup>
       <_StudioPublishedExecutable>$([System.IO.Path]::Combine('$(StudioPublishDir)', '$(StudioAssemblyName).exe'))</_StudioPublishedExecutable>
-      <_StudioInstallerIcon>$([System.IO.Path]::Combine('$(StudioProjectDir)', 'ManifestUpdater.ico'))</_StudioInstallerIcon>
+      <_StudioInstallerIcon>$([System.IO.Path]::Combine('$(StudioProjectDir)', 'Assets', 'ManifestUpdater.ico'))</_StudioInstallerIcon>
     </PropertyGroup>
 
     <Error Condition="'$(Version)' == ''" Text="The application version was not supplied to the MSI project." />

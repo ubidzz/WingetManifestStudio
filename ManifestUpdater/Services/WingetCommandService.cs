@@ -54,11 +54,18 @@ internal static class WingetCommandService
 	}
 
 	public static int StartWingetCreateInteractive(string command, string arguments, string workingDirectory)
+		=> StartWingetCreateInteractiveSession(command, arguments, workingDirectory).ProcessId;
+
+	public static InteractiveCommandSession StartWingetCreateInteractiveSession(string command, string arguments, string workingDirectory)
 	{
+		string logFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudio", "command-logs");
+		Directory.CreateDirectory(logFolder);
+		string logPath = Path.Combine(logFolder, $"wingetcreate-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.log");
 		ProcessStartInfo startInfo = CreateInteractiveProcessStartInfo(command, arguments, workingDirectory);
+		startInfo.Environment["WMS_WINGETCREATE_LOG"] = logPath;
 		using Process process = Process.Start(startInfo)
 			?? throw new InvalidOperationException("Windows could not start WingetCreate in an interactive console.");
-		return process.Id;
+		return new InteractiveCommandSession(process.Id, logPath);
 	}
 
 	internal static ProcessStartInfo CreateInteractiveProcessStartInfo(string command, string arguments, string workingDirectory)
@@ -72,7 +79,7 @@ internal static class WingetCommandService
 			$host.UI.RawUI.WindowTitle = 'Winget Manifest Studio - WingetCreate'
 			Write-Host ('> wingetcreate ' + ($wingetArguments -join ' ')) -ForegroundColor Cyan
 			Write-Host ''
-			& wingetcreate @wingetArguments
+			& wingetcreate @wingetArguments 2>&1 | Tee-Object -FilePath $env:WMS_WINGETCREATE_LOG
 			$wingetExitCode = $LASTEXITCODE
 			Write-Host ''
 			if ($wingetExitCode -eq 0) {
@@ -117,6 +124,91 @@ internal static class WingetCommandService
 	public static Task<CommandResult> ValidateManifestAsync(string manifestFolder, CancellationToken cancellationToken = default)
 	{
 		return RunAsync("winget", ["validate", "--manifest", manifestFolder], manifestFolder, cancellationToken);
+	}
+
+	public static Task<CommandResult> SearchExactPackageAsync(string packageIdentifier, CancellationToken cancellationToken = default)
+	{
+		return RunAsync("winget.exe", ["search", "--id", packageIdentifier, "--exact", "--source", "winget", "--accept-source-agreements"], Environment.CurrentDirectory, cancellationToken);
+	}
+
+	public static Task<CommandResult> ListInstalledPackageAsync(string packageIdentifier, CancellationToken cancellationToken = default)
+	{
+		return RunAsync("winget.exe", ["list", "--id", packageIdentifier, "--exact", "--accept-source-agreements"], Environment.CurrentDirectory, cancellationToken);
+	}
+
+	public static InteractiveCommandSession StartManifestInstallSession(string manifestFolder)
+	{
+		return StartPersistentConsoleSession(
+			"winget.exe",
+			["install", "--manifest", manifestFolder, "--accept-package-agreements", "--accept-source-agreements", "--verbose-logs"],
+			manifestFolder,
+			"Winget Manifest Studio - Local Install Test",
+			"local-install");
+	}
+
+	public static InteractiveCommandSession StartSandboxTestSession(string scriptPath, string manifestFolder)
+	{
+		string mapFolder = Directory.GetParent(manifestFolder)?.FullName ?? manifestFolder;
+		return StartPersistentConsoleSession(
+			"powershell.exe",
+			["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-Manifest", manifestFolder, "-MapFolder", mapFolder, "-WarningAction", "Continue"],
+			mapFolder,
+			"Winget Manifest Studio - Official Windows Sandbox Test",
+			"sandbox-test");
+	}
+
+	public static int StartEnableLocalManifestFilesElevated()
+	{
+		const string script = """
+			$host.UI.RawUI.WindowTitle = 'Winget Manifest Studio - Enable Local Manifest Testing'
+			Write-Host 'Enabling Winget local manifest testing for this computer...' -ForegroundColor Cyan
+			& winget.exe settings --enable LocalManifestFiles
+			$code = $LASTEXITCODE
+			Write-Host ''
+			if ($code -eq 0) { Write-Host 'Local manifest testing is enabled.' -ForegroundColor Green }
+			else { Write-Host ('Winget returned exit code ' + $code + '.') -ForegroundColor Red }
+			[void](Read-Host 'Press Enter to close')
+			exit $code
+			""";
+		string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+		ProcessStartInfo startInfo = new()
+		{
+			FileName = "powershell.exe",
+			UseShellExecute = true,
+			Verb = "runas",
+			WindowStyle = ProcessWindowStyle.Normal
+		};
+		startInfo.ArgumentList.Add("-NoLogo");
+		startInfo.ArgumentList.Add("-NoProfile");
+		startInfo.ArgumentList.Add("-ExecutionPolicy");
+		startInfo.ArgumentList.Add("Bypass");
+		startInfo.ArgumentList.Add("-EncodedCommand");
+		startInfo.ArgumentList.Add(encoded);
+		using Process process = Process.Start(startInfo)
+			?? throw new InvalidOperationException("Windows could not start the administrator confirmation window.");
+		return process.Id;
+	}
+
+	public static bool IsLocalManifestFilesEnabled()
+	{
+		try
+		{
+			string path = Path.Combine(
+				Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+				"Packages", "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe", "LocalState", "settings.json");
+			if (!File.Exists(path)) return false;
+			using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+			return document.RootElement.TryGetProperty("experimentalFeatures", out JsonElement features)
+				&& features.TryGetProperty("localManifestFiles", out JsonElement enabled)
+				&& enabled.ValueKind == JsonValueKind.True;
+		}
+		catch { return false; }
+	}
+
+	public static bool IsWindowsSandboxAvailable()
+	{
+		string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+		return File.Exists(Path.Combine(windows, "System32", "WindowsSandbox.exe"));
 	}
 
 	public static Task<CommandResult> InstallWingetCreateAsync(CancellationToken cancellationToken = default)
@@ -190,6 +282,56 @@ internal static class WingetCommandService
 		return new CommandResult(process.ExitCode, await output, await error);
 	}
 
+	private static InteractiveCommandSession StartPersistentConsoleSession(
+		string executable,
+		IReadOnlyList<string> arguments,
+		string workingDirectory,
+		string title,
+		string logPrefix)
+	{
+		string logFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudio", "command-logs");
+		Directory.CreateDirectory(logFolder);
+		string logPath = Path.Combine(logFolder, $"{logPrefix}-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.log");
+		const string consoleScript = """
+			$ErrorActionPreference = 'Continue'
+			$command = $env:WMS_CONSOLE_EXECUTABLE
+			$arguments = @((ConvertFrom-Json -InputObject $env:WMS_CONSOLE_ARGUMENTS))
+			$host.UI.RawUI.WindowTitle = $env:WMS_CONSOLE_TITLE
+			Write-Host ('> ' + $command + ' ' + ($arguments -join ' ')) -ForegroundColor Cyan
+			Write-Host ''
+			& $command @arguments 2>&1 | Tee-Object -FilePath $env:WMS_CONSOLE_LOG
+			$code = $LASTEXITCODE
+			Write-Host ''
+			if ($code -eq 0) { Write-Host 'The test command completed successfully.' -ForegroundColor Green }
+			else { Write-Host ('The test command exited with code ' + $code + '.') -ForegroundColor Red }
+			Write-Host 'This window is staying open so you can review the complete result.' -ForegroundColor Yellow
+			[void](Read-Host 'Press Enter to close')
+			exit $code
+			""";
+		string encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(consoleScript));
+		ProcessStartInfo startInfo = new()
+		{
+			FileName = "powershell.exe",
+			WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : Environment.CurrentDirectory,
+			UseShellExecute = false,
+			CreateNoWindow = false,
+			WindowStyle = ProcessWindowStyle.Normal
+		};
+		startInfo.ArgumentList.Add("-NoLogo");
+		startInfo.ArgumentList.Add("-NoProfile");
+		startInfo.ArgumentList.Add("-ExecutionPolicy");
+		startInfo.ArgumentList.Add("Bypass");
+		startInfo.ArgumentList.Add("-EncodedCommand");
+		startInfo.ArgumentList.Add(encodedScript);
+		startInfo.Environment["WMS_CONSOLE_EXECUTABLE"] = executable;
+		startInfo.Environment["WMS_CONSOLE_ARGUMENTS"] = JsonSerializer.Serialize(arguments);
+		startInfo.Environment["WMS_CONSOLE_TITLE"] = title;
+		startInfo.Environment["WMS_CONSOLE_LOG"] = logPath;
+		using Process process = Process.Start(startInfo)
+			?? throw new InvalidOperationException("Windows could not start the persistent test console.");
+		return new InteractiveCommandSession(process.Id, logPath);
+	}
+
 	public static IReadOnlyList<string> Tokenize(string commandLine)
 	{
 		List<string> arguments = [];
@@ -226,3 +368,5 @@ internal static class WingetCommandService
 		return arguments;
 	}
 }
+
+internal sealed record InteractiveCommandSession(int ProcessId, string LogPath);

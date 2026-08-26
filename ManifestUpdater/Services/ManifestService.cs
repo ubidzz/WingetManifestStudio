@@ -9,6 +9,8 @@ internal static partial class ManifestService
 
 	public static ManifestProject LoadProject(string folder)
 	{
+		return SchemaAwareYaml.LoadProject(folder, MaximumManifestBytes);
+		/* Legacy targeted reader retained below as a compatibility reference.
 		ManifestFiles files = FindManifestFiles(folder);
 		if (files.Version is null && files.Locale is null && files.Installer is null)
 			return new ManifestProject { ManifestFolder = folder };
@@ -50,7 +52,7 @@ internal static partial class ManifestService
 		project.InstallModes = project.InstallModes.IfEmpty("interactive, silent, silentWithProgress");
 		foreach (InstallerArtifact artifact in ReadInstallers(installerText, project.InstallerType, project.Scope))
 			project.Installers.Add(artifact);
-		return project;
+		return project; */
 	}
 
 	public static ManifestGenerationResult Generate(ManifestProject project)
@@ -59,6 +61,8 @@ internal static partial class ManifestService
 		if (errors.Count > 0)
 			throw new InvalidDataException(string.Join(Environment.NewLine, errors.Select(error => "• " + error)));
 
+		return SchemaAwareYaml.Generate(project, MaximumManifestBytes);
+		/* Legacy targeted writer retained below as a compatibility reference.
 		ManifestFiles existing = FindManifestFiles(project.ManifestFolder);
 		Dictionary<string, string> files = new(StringComparer.OrdinalIgnoreCase);
 		List<string> changes = [];
@@ -84,14 +88,24 @@ internal static partial class ManifestService
 			? BuildInstallerManifest(project)
 			: PatchInstallerManifest(File.ReadAllText(existing.Installer), project);
 
-		changes.Add(existing.Version is null ? "Create the version manifest." : "Update the version manifest while preserving other fields.");
-		changes.Add(existing.Locale is null ? "Create the default-locale manifest." : "Update the locale manifest while preserving other fields.");
-		changes.Add(existing.Installer is null ? "Create the installer manifest." : "Update installer entries while preserving unsupported and custom fields.");
+		string previousIdentifier = existing.Version is null ? string.Empty : FirstScalar("PackageIdentifier", File.ReadAllText(existing.Version));
+		string previousVersion = existing.Version is null ? string.Empty : FirstScalar("PackageVersion", File.ReadAllText(existing.Version));
+		changes.Add(!string.IsNullOrWhiteSpace(previousIdentifier) && !string.Equals(previousIdentifier, project.PackageIdentifier, StringComparison.Ordinal)
+			? $"Package identifier: {previousIdentifier}  →  {project.PackageIdentifier}"
+			: $"Package: {project.PackageIdentifier}");
+		changes.Add(!string.IsNullOrWhiteSpace(previousVersion) && !string.Equals(previousVersion, project.PackageVersion, StringComparison.Ordinal)
+			? $"Release version: {previousVersion}  →  {project.PackageVersion}"
+			: $"Release version: {project.PackageVersion}");
+		changes.Add($"Default language: {project.DefaultLocale}");
+		changes.Add($"Installers: {project.Installers.Count} ({string.Join(", ", project.Installers.Select(installer => installer.Architecture.IfEmpty("architecture not set")).Distinct(StringComparer.OrdinalIgnoreCase))})");
+		changes.Add(existing.Version is null ? $"Create {versionName}." : $"Update {versionName} and preserve fields the Studio does not edit.");
+		changes.Add(existing.Locale is null ? $"Create {localeName}." : $"Update {localeName} and preserve fields the Studio does not edit.");
+		changes.Add(existing.Installer is null ? $"Create {installerName}." : $"Update {installerName} and preserve custom installer fields.");
 		if (project.Installers.Any(installer => string.IsNullOrWhiteSpace(installer.LocalFile)))
 			warnings.Add("At least one installer is URL-only. Its recorded hash could not be compared with a local release file during this run.");
 		if (project.AllowInsecureUrls)
 			warnings.Add("Unsecured HTTP installer URLs are allowed for this project.");
-		return new ManifestGenerationResult(files, changes, warnings);
+		return new ManifestGenerationResult(files, changes, warnings); */
 	}
 
 	public static void Save(ManifestProject project, ManifestGenerationResult result)
@@ -151,10 +165,16 @@ internal static partial class ManifestService
 	public static List<string> Validate(ManifestProject project)
 	{
 		List<string> errors = [];
-		if (!PackageIdRegex().IsMatch(project.PackageIdentifier))
-			errors.Add("Package Identifier must use letters, numbers, periods, or hyphens and cannot be empty.");
+		if (string.IsNullOrWhiteSpace(project.PackageIdentifier))
+			errors.Add("Package Identifier is required. Use Publisher.Application, for example ubidzz.WingetManifestStudio.");
+		else if (project.PackageIdentifier.Length > 128)
+			errors.Add("Package Identifier is too long. It must be 128 characters or fewer.");
+		else if (!PackageIdRegex().IsMatch(project.PackageIdentifier))
+			errors.Add("Package Identifier must contain 2 to 8 dot-separated parts, such as ubidzz.WingetManifestStudio. Each part can be up to 32 characters and cannot contain spaces or Windows filename symbols.");
 		if (string.IsNullOrWhiteSpace(project.PackageVersion) || project.PackageVersion.StartsWith('v'))
 			errors.Add("Package Version is required and must not begin with v.");
+		if (string.IsNullOrWhiteSpace(project.DefaultLocale)) errors.Add("Default Locale is required, usually en-US.");
+		if (string.IsNullOrWhiteSpace(project.ManifestVersion)) errors.Add("Manifest Version is required, usually 1.12.0.");
 		if (string.IsNullOrWhiteSpace(project.PackageName)) errors.Add("Package Name is required.");
 		if (string.IsNullOrWhiteSpace(project.Publisher)) errors.Add("Publisher is required.");
 		if (string.IsNullOrWhiteSpace(project.ShortDescription)) errors.Add("Short Description is required.");
@@ -165,13 +185,34 @@ internal static partial class ManifestService
 		{
 			InstallerArtifact installer = project.Installers[index];
 			string label = $"Installer {index + 1}";
-			if (!Uri.TryCreate(installer.InstallerUrl, UriKind.Absolute, out Uri? uri))
+			if (!Uri.TryCreate(installer.InstallerUrl, UriKind.Absolute, out Uri? uri)
+				|| (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+					&& !uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)))
 				errors.Add($"{label} needs a valid public Installer URL.");
 			else if (!project.AllowInsecureUrls && !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
 				errors.Add($"{label} must use HTTPS unless unsecured URLs are explicitly allowed.");
 			if (!ShaRegex().IsMatch(installer.Sha256)) errors.Add($"{label} needs a calculated 64-character SHA-256 hash.");
 			if (string.IsNullOrWhiteSpace(installer.Architecture)) errors.Add($"{label} needs an architecture.");
+			if (installer.VerificationStatus.StartsWith("FAILED", StringComparison.OrdinalIgnoreCase))
+				errors.Add($"{label} failed public URL verification. The public download must match the attached local file.");
 		}
+		if (project.InstallerType.Equals("zip", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(project.NestedInstallerType))
+			errors.Add("Nested Installer Type is required when Installer Type is ZIP.");
+		if (!string.IsNullOrWhiteSpace(project.ReleaseDate)
+			&& !DateOnly.TryParseExact(project.ReleaseDate, "yyyy-MM-dd", out _))
+			errors.Add("Release Date must use YYYY-MM-DD.");
+		foreach ((string name, string value) in new Dictionary<string, string>
+		{
+			["Installer Aborts Terminal"] = project.InstallerAbortsTerminal,
+			["Install Location Required"] = project.InstallLocationRequired,
+			["Require Explicit Upgrade"] = project.RequireExplicitUpgrade,
+			["Display Install Warnings"] = project.DisplayInstallWarnings,
+			["Download Command Prohibited"] = project.DownloadCommandProhibited,
+			["Archive Binaries Depend On Path"] = project.ArchiveBinariesDependOnPath
+		})
+			if (!string.IsNullOrWhiteSpace(value) && !bool.TryParse(value, out _))
+				errors.Add($"{name} must be true, false, or blank.");
+		errors.AddRange(SchemaAwareYaml.ValidateAdvancedFields(project));
 		return errors;
 	}
 
@@ -614,7 +655,7 @@ internal static partial class ManifestService
 		}
 	}
 
-	[GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9.-]*$", RegexOptions.CultureInvariant)]
+	[GeneratedRegex(@"^[^.\s\\/:*?""<>|\x01-\x1f]{1,32}(\.[^.\s\\/:*?""<>|\x01-\x1f]{1,32}){1,7}$", RegexOptions.CultureInvariant)]
 	private static partial Regex PackageIdRegex();
 
 	[GeneratedRegex(@"^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant)]

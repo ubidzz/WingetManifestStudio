@@ -2,6 +2,20 @@ namespace ManifestUpdater;
 
 internal static class UiSelfTestRunner
 {
+	public static Task<int> RunStartupProbeAsync()
+	{
+		System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+		using MainForm form = new(uiTestMode: true);
+		form.Shown += (_, _) =>
+		{
+			timer.Stop();
+			File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "startup-probe.txt"), timer.ElapsedMilliseconds.ToString());
+			form.Close();
+		};
+		Application.Run(form);
+		return Task.FromResult(0);
+	}
+
 	public static Task<int> RunAsync()
 	{
 		List<string> report = [];
