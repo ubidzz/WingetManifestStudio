@@ -5,6 +5,40 @@ namespace ManifestUpdater;
 
 internal static class WingetCommandService
 {
+	private static readonly HashSet<string> InteractiveCommands = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"new",
+		"new-locale",
+		"update-locale",
+		"submit",
+		"token"
+	};
+
+	public static bool RequiresInteractiveConsole(string command, string arguments)
+	{
+		if (InteractiveCommands.Contains(command)) return true;
+		return string.Equals(command, "update", StringComparison.OrdinalIgnoreCase)
+			&& Tokenize(arguments).Any(argument => string.Equals(argument, "--interactive", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(argument, "-i", StringComparison.OrdinalIgnoreCase));
+	}
+
+	public static int StartWingetCreateInteractive(string command, string arguments, string workingDirectory)
+	{
+		ProcessStartInfo startInfo = new()
+		{
+			FileName = "wingetcreate",
+			WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : Environment.CurrentDirectory,
+			UseShellExecute = true,
+			WindowStyle = ProcessWindowStyle.Normal
+		};
+		startInfo.ArgumentList.Add(command);
+		foreach (string argument in Tokenize(arguments)) startInfo.ArgumentList.Add(argument);
+
+		using Process process = Process.Start(startInfo)
+			?? throw new InvalidOperationException("Windows could not start WingetCreate in an interactive console.");
+		return process.Id;
+	}
+
 	public static async Task<CommandResult> RunWingetCreateAsync(
 		string command,
 		string arguments,

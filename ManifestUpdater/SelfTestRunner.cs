@@ -13,6 +13,7 @@ internal static class SelfTestRunner
 			TestPreservingUpdate(root, results);
 			TestCleanValidationFolder(root, results);
 			TestReleaseUrlSynchronization(results);
+			TestWingetCreateCommandModes(results);
 			TestProfileRoundTrip(root, results);
 			await TestInstallerInspectionAsync(results);
 			int verifyIndex = Array.FindIndex(args, argument => string.Equals(argument, "--verify-folder", StringComparison.OrdinalIgnoreCase));
@@ -162,6 +163,19 @@ ManifestVersion: 1.12.0
 		Assert(notes.EndsWith("/releases/tag/v1.0.23", StringComparison.Ordinal), "GitHub release-notes URLs must follow an inspected installer version.");
 		Assert(unrelated.Contains("1.0.22", StringComparison.Ordinal), "Unrecognized download URLs must not be rewritten automatically.");
 		results.Add("PASS: inspected versions safely synchronize GitHub release URLs.");
+	}
+
+	private static void TestWingetCreateCommandModes(List<string> results)
+	{
+		Assert(WingetCommandService.RequiresInteractiveConsole("new", string.Empty), "New manifests require an interactive console.");
+		Assert(WingetCommandService.RequiresInteractiveConsole("new-locale", "--locale en-US"), "New locale manifests require an interactive console.");
+		Assert(WingetCommandService.RequiresInteractiveConsole("update-locale", "--locale en-US"), "Locale updates require an interactive console.");
+		Assert(WingetCommandService.RequiresInteractiveConsole("submit", "C:\\manifests"), "Submission must allow WingetCreate to request GitHub authentication.");
+		Assert(WingetCommandService.RequiresInteractiveConsole("token", "--store"), "Token commands must allow WingetCreate to request GitHub authentication.");
+		Assert(WingetCommandService.RequiresInteractiveConsole("update", "--interactive Contoso.Sample"), "Interactive updates require a console.");
+		Assert(!WingetCommandService.RequiresInteractiveConsole("update", "--version 2.0 Contoso.Sample"), "Non-interactive updates should keep captured output in the Studio.");
+		Assert(!WingetCommandService.RequiresInteractiveConsole("show", "Contoso.Sample"), "Show should keep captured output in the Studio.");
+		results.Add("PASS: WingetCreate interactive commands are routed to a real console.");
 	}
 
 	private static async Task TestInstallerInspectionAsync(List<string> results)

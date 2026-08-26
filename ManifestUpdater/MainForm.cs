@@ -280,7 +280,7 @@ public partial class MainForm : Form
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 		root.Controls.Add(NewHelpLabel(
-			"Full WingetCreate access for New, Update, New-Locale, Update-Locale, Submit, Show, Token, Settings, Cache, Info, and DSC. Commands run directly without cmd.exe.", 950), 0, 0);
+			"Full WingetCreate access for New, Update, New-Locale, Update-Locale, Submit, Show, Token, Settings, Cache, Info, and DSC. Commands run directly without cmd.exe. Commands that ask questions open a real WingetCreate console so you can answer them.", 950), 0, 0);
 
 		FlowLayoutPanel commandRow = CreateInlinePanel();
 		toolCommandBox = NewComboBox(190);
@@ -302,7 +302,7 @@ public partial class MainForm : Form
 		toolOutputBox = NewRichTextBox();
 		toolOutputBox.ReadOnly = true;
 		toolOutputBox.Font = new Font("Cascadia Mono", 9F);
-		toolOutputBox.Text = "Official command output appears here. GitHub tokens are managed by WingetCreate, not saved in this application.";
+		toolOutputBox.Text = "Official command output appears here. Question-based commands open a separate WingetCreate console. GitHub tokens are managed by WingetCreate, not saved in this application.";
 		root.Controls.Add(toolOutputBox, 0, 3);
 		page.Controls.Add(root);
 		return page;
@@ -714,10 +714,23 @@ public partial class MainForm : Form
 			SetBusy(true);
 			toolOutputBox.Text = $"> wingetcreate {command} {arguments}{Environment.NewLine}{Environment.NewLine}";
 			SelectTab("Official Tool Commands");
+			string commandFolder = string.IsNullOrWhiteSpace(workingDirectory) ? project.ManifestFolder : workingDirectory;
+			if (WingetCommandService.RequiresInteractiveConsole(command, arguments))
+			{
+				int processId = WingetCommandService.StartWingetCreateInteractive(command, arguments, commandFolder);
+				toolOutputBox.AppendText(
+					"WingetCreate opened in its own console because this command asks interactive questions."
+					+ Environment.NewLine
+					+ "Complete the questions in that console window. Manifest Studio remains available here."
+					+ Environment.NewLine
+					+ $"Process ID: {processId}");
+				SetStatus("WingetCreate opened an interactive console. Complete the questions there.");
+				return;
+			}
 			CommandResult result = await WingetCommandService.RunWingetCreateAsync(
 				command,
 				arguments,
-				string.IsNullOrWhiteSpace(workingDirectory) ? project.ManifestFolder : workingDirectory,
+				commandFolder,
 				operationCancellation!.Token);
 			toolOutputBox.AppendText(result.CombinedOutput);
 			SetStatus(result.ExitCode == 0 ? "WingetCreate completed successfully." : $"WingetCreate exited with code {result.ExitCode}.");
