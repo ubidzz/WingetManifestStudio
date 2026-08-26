@@ -1,0 +1,79 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Winget Manifest Studio"
+    Manufacturer="ubidzz"
+    Version="$(var.StudioVersion)"
+    UpgradeCode="{6d0806a3-e0c1-4f2f-ba0f-dd6bb1be0519}"
+    Scope="perUser"
+    Compressed="yes">
+
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      Schedule="afterInstallInitialize"
+      DowngradeErrorMessage="A newer version of Winget Manifest Studio is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon
+      Id="StudioIcon.ico"
+      SourceFile="$(var.StudioProjectDir)\ManifestUpdater.ico" />
+    <Property Id="ARPPRODUCTICON" Value="StudioIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/ubidzz" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="LocalProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Winget Manifest Studio">
+          <Component Id="StudioProgram" Guid="{015c7452-bd52-4236-9230-2883b8f0e628}">
+            <File
+              Id="StudioExecutable"
+              Source="$(var.StudioPublishDir)\$(var.StudioAssemblyName).exe">
+              <Shortcut
+                Id="StudioStartMenuShortcut"
+                Directory="ProgramMenuFolder"
+                Name="Winget Manifest Studio"
+                Description="Create and update Windows Package Manager manifests"
+                WorkingDirectory="INSTALLFOLDER" />
+              <Shortcut
+                Id="StudioDesktopShortcut"
+                Directory="DesktopFolder"
+                Name="Winget Manifest Studio"
+                Description="Create and update Windows Package Manager manifests"
+                WorkingDirectory="INSTALLFOLDER" />
+            </File>
+
+            <RegistryValue
+              Root="HKCU"
+              Key="Software\ubidzz\Winget Manifest Studio"
+              Name="Installed"
+              Type="integer"
+              Value="1"
+              KeyPath="yes" />
+            <RegistryValue
+              Root="HKCU"
+              Key="Software\ubidzz\Winget Manifest Studio"
+              Name="InstallLocation"
+              Type="string"
+              Value="[INSTALLFOLDER]" />
+
+            <RemoveFolder
+              Id="RemoveStudioInstallFolder"
+              Directory="INSTALLFOLDER"
+              On="uninstall" />
+            <RemoveFolder
+              Id="TrackLocalProgramsFolder"
+              Directory="LocalProgramsFolder"
+              On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="StudioFeature" Title="Winget Manifest Studio">
+      <ComponentRef Id="StudioProgram" />
+    </Feature>
+  </Package>
+</Wix>

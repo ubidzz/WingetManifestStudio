@@ -1,0 +1,26 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <OutputName>SynixStudioSetup</OutputName>
+    <OutputPath>$(MSBuildThisFileDirectory)bin\$(Configuration)\</OutputPath>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <AcceptEula>wix7</AcceptEula>
+    <SuppressValidation>true</SuppressValidation>
+    <Version>$(Version)</Version>
+    <DefineConstants>$(DefineConstants);StudioVersion=$(Version);StudioPublishDir=$(StudioPublishDir);StudioProjectDir=$(StudioProjectDir);StudioAssemblyName=$(StudioAssemblyName)</DefineConstants>
+  </PropertyGroup>
+
+  <Target Name="ValidateMsiInputs" BeforeTargets="Build">
+    <PropertyGroup>
+      <_StudioPublishedExecutable>$([System.IO.Path]::Combine('$(StudioPublishDir)', '$(StudioAssemblyName).exe'))</_StudioPublishedExecutable>
+      <_StudioInstallerIcon>$([System.IO.Path]::Combine('$(StudioProjectDir)', 'ManifestUpdater.ico'))</_StudioInstallerIcon>
+    </PropertyGroup>
+
+    <Error Condition="'$(Version)' == ''" Text="The application version was not supplied to the MSI project." />
+    <Error Condition="'$(StudioPublishDir)' == ''" Text="The publish folder was not supplied to the MSI project." />
+    <Error Condition="'$(StudioProjectDir)' == ''" Text="The project folder was not supplied to the MSI project." />
+    <Error Condition="'$(StudioAssemblyName)' == ''" Text="The assembly name was not supplied to the MSI project." />
+    <Error Condition="!Exists('$(_StudioPublishedExecutable)')" Text="The published executable was not found at $(_StudioPublishedExecutable)." />
+    <Error Condition="!Exists('$(_StudioInstallerIcon)')" Text="The installer icon was not found at $(_StudioInstallerIcon)." />
+  </Target>
+</Project>

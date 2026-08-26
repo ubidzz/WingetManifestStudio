@@ -337,12 +337,12 @@ public partial class MainForm : Form
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.Controls.Add(CreateInfoStrip("HOW HASHING WORKS", "Loaded manifests show the URLs and hashes already written in their YAML. To verify or replace a hash, select that row, attach the matching local release file, and inspect it. The Studio never guesses which file belongs to a URL."), 0, 0);
+		root.Controls.Add(CreateInfoStrip("INSTALLER DETAILS ARE AUTOMATIC", "Add or attach a local installer and the Studio calculates its SHA-256, detects its type and architecture, and reads ProductCode and UpgradeCode directly from MSI files. For EXE, Inno, and Nullsoft installers these fields are optional and are left blank when the installer does not provide them."), 0, 0);
 		root.Controls.Add(CreateToolbar(
 			("Add Release Files", async (_, _) => await AddInstallerFilesAsync()),
 			("Add URL-Only Row", (_, _) => AddUrlInstaller()),
 			("Attach File to Selected", async (_, _) => await AttachFileToSelectedAsync()),
-			("Inspect Selected", async (_, _) => await InspectSelectedAsync()),
+			("Inspect & Fill Details", async (_, _) => await InspectSelectedAsync()),
 			("Inspect Local Files", async (_, _) => await InspectAllLocalAsync()),
 			("Remove", (_, _) => RemoveSelectedInstaller())), 0, 1);
 
@@ -1010,7 +1010,19 @@ public partial class MainForm : Form
 		};
 		grid.CellFormatting += (_, eventArgs) =>
 		{
-			if (eventArgs.RowIndex < 0 || eventArgs.ColumnIndex < 0 || grid.Columns[eventArgs.ColumnIndex].Name != nameof(InstallerArtifact.VerificationStatus)) return;
+			if (eventArgs.RowIndex < 0 || eventArgs.ColumnIndex < 0) return;
+			string columnName = grid.Columns[eventArgs.ColumnIndex].Name;
+			if (columnName is nameof(InstallerArtifact.ProductCode) or nameof(InstallerArtifact.UpgradeCode) &&
+				grid.Rows[eventArgs.RowIndex].DataBoundItem is InstallerArtifact installer &&
+				string.IsNullOrWhiteSpace(Convert.ToString(eventArgs.Value)))
+			{
+				bool usesMsiCodes = UsesMsiIdentityCodes(installer.InstallerType);
+				eventArgs.Value = usesMsiCodes ? "Not found in MSI" : "Not provided (optional)";
+				eventArgs.CellStyle!.ForeColor = usesMsiCodes ? StudioPalette.Warning : StudioPalette.MutedText;
+				eventArgs.FormattingApplied = true;
+				return;
+			}
+			if (columnName != nameof(InstallerArtifact.VerificationStatus)) return;
 			string value = Convert.ToString(eventArgs.Value) ?? string.Empty;
 			eventArgs.CellStyle!.ForeColor = value.Contains("verified", StringComparison.OrdinalIgnoreCase) || value.Contains("calculated", StringComparison.OrdinalIgnoreCase)
 				? StudioPalette.Success
@@ -1018,8 +1030,24 @@ public partial class MainForm : Form
 					? Color.FromArgb(255, 105, 125)
 					: StudioPalette.Warning;
 		};
+		grid.CellToolTipTextNeeded += (_, eventArgs) =>
+		{
+			if (eventArgs.RowIndex < 0 || eventArgs.ColumnIndex < 0 ||
+				grid.Rows[eventArgs.RowIndex].DataBoundItem is not InstallerArtifact installer)
+				return;
+			string columnName = grid.Columns[eventArgs.ColumnIndex].Name;
+			if (columnName is not (nameof(InstallerArtifact.ProductCode) or nameof(InstallerArtifact.UpgradeCode)))
+				return;
+			eventArgs.ToolTipText = UsesMsiIdentityCodes(installer.InstallerType)
+				? "This value is read automatically from the selected MSI file. 'Not found in MSI' means the package author did not include it."
+				: "This installer does not provide standardized MSI identity codes. Winget treats these fields as optional, so leave them blank unless you know the installed Apps & Features correlation value.";
+		};
 		return grid;
 	}
+
+	private static bool UsesMsiIdentityCodes(string installerType) =>
+		installerType.Equals("msi", StringComparison.OrdinalIgnoreCase) ||
+		installerType.Equals("wix", StringComparison.OrdinalIgnoreCase);
 
 	private Control Field(string key, string label, string hint = "", bool multiline = false, int width = 520)
 	{

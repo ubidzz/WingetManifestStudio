@@ -104,7 +104,7 @@ internal static class InstallerInspector
 			".appxbundle" => "appx",
 			".zip" => "zip",
 			".exe" when ContainsMarker(path, "Inno Setup") => "inno",
-			".exe" when ContainsMarker(path, "Nullsoft") || ContainsMarker(path, "NSIS") => "nullsoft",
+			".exe" when ContainsMarker(path, "Nullsoft") => "nullsoft",
 			".exe" => "exe",
 			_ => "portable"
 		};
