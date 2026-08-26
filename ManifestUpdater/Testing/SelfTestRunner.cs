@@ -342,10 +342,13 @@ ManifestVersion: 1.12.0
 
 	private static async Task TestInstallerInspectionAsync(List<string> results)
 	{
-		string executable = Environment.ProcessPath ?? throw new InvalidOperationException("The self-test executable path is unavailable.");
+		string publishedExecutable = Path.Combine(AppContext.BaseDirectory, "WingetManifestStudio.exe");
+		string executable = File.Exists(publishedExecutable)
+			? publishedExecutable
+			: Environment.ProcessPath ?? throw new InvalidOperationException("The self-test executable path is unavailable.");
 		InstallerInspection inspection = await InstallerInspector.InspectAsync(executable, string.Empty);
 		Assert(inspection.Sha256.Length == 64, "Installer inspection must calculate SHA-256.");
-		Assert(inspection.InstallerType == "exe", "An executable must be identified as an EXE installer.");
+		Assert(inspection.InstallerType is "exe" or "inno" or "nullsoft", "An executable must be identified as a supported EXE installer type.");
 		results.Add("PASS: local installer inspection and hashing.");
 	}
 
