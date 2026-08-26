@@ -47,6 +47,8 @@
       <_StudioPublishedExe>$([System.IO.Path]::Combine('$(_StudioPublishDirectory)', '$(AssemblyName).exe'))</_StudioPublishedExe>
       <_StudioMsiPayloadDirectory>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'obj', 'MsiPayload'))</_StudioMsiPayloadDirectory>
       <_StudioMsiPayloadExe>$([System.IO.Path]::Combine('$(_StudioMsiPayloadDirectory)', '$(AssemblyName).exe'))</_StudioMsiPayloadExe>
+      <_StudioMsiIntermediateDirectory>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'obj', 'MsiBuildIntermediate'))</_StudioMsiIntermediateDirectory>
+      <_StudioMsiBuildOutputDirectory>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'obj', 'MsiBuildOutput'))</_StudioMsiBuildOutputDirectory>
       <_StudioMsiProject>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'Packaging', 'MSI', 'WingetManifestStudioInstaller.wixproj'))</_StudioMsiProject>
       <_StudioMsiBuildOutput>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'Packaging', 'MSI', 'bin', 'Release', 'SynixStudioSetup.msi'))</_StudioMsiBuildOutput>
       <_StudioMsiOutput>$([System.IO.Path]::Combine('$(_StudioPublishDirectory)', 'SynixStudioSetup.msi'))</_StudioMsiOutput>
@@ -73,8 +75,10 @@
 
     <Message Text="Preparing the small framework-dependent MSI payload. The installed app requires the Microsoft .NET 10 Desktop Runtime (x64)." Importance="high" />
     <RemoveDir Directories="$(_StudioMsiPayloadDirectory)" Condition="Exists('$(_StudioMsiPayloadDirectory)')" />
+    <RemoveDir Directories="$(_StudioMsiIntermediateDirectory)" Condition="Exists('$(_StudioMsiIntermediateDirectory)')" />
+    <RemoveDir Directories="$(_StudioMsiBuildOutputDirectory)" Condition="Exists('$(_StudioMsiBuildOutputDirectory)')" />
     <Exec
-      Command="&quot;$(_StudioDotNetHost)&quot; publish &quot;$(MSBuildProjectFullPath)&quot; --configuration Release --runtime win-x64 --self-contained false --no-restore --nologo &quot;-p:BuildStudioMsi=false&quot; &quot;-p:PublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:PublishSingleFile=true&quot; &quot;-p:PublishReadyToRun=false&quot; &quot;-p:DebugType=None&quot; &quot;-p:DebugSymbols=false&quot;"
+      Command="&quot;$(_StudioDotNetHost)&quot; publish &quot;$(MSBuildProjectFullPath)&quot; --configuration Release --runtime win-x64 --self-contained false --nologo &quot;-p:BuildStudioMsi=false&quot; &quot;-p:IntermediateOutputPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:MSBuildProjectExtensionsPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:OutputPath=$(_StudioMsiBuildOutputDirectory)/&quot; &quot;-p:PublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:PublishSingleFile=true&quot; &quot;-p:PublishReadyToRun=false&quot; &quot;-p:DebugType=None&quot; &quot;-p:DebugSymbols=false&quot;"
       WorkingDirectory="$(MSBuildProjectDirectory)" />
     <Error Condition="!Exists('$(_StudioMsiPayloadExe)')" Text="The framework-dependent Winget Manifest Studio MSI payload was not created at $(_StudioMsiPayloadExe)." />
     <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing the framework-dependent MSI application payload..." Importance="high" />
