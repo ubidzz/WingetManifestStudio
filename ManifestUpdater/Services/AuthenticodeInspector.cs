@@ -22,7 +22,7 @@ internal static class AuthenticodeInspector
 		if (!File.Exists(path))
 			return new AuthenticodeInspection("Missing", false, false, string.Empty, string.Empty, null, null, "The local installer file does not exist.");
 
-		X509Certificate2? certificate = null;
+		X509Certificate2 certificate;
 		try
 		{
 			#pragma warning disable SYSLIB0057 // Required Windows API for extracting an Authenticode signer from a PE/MSI file.
@@ -34,25 +34,41 @@ internal static class AuthenticodeInspector
 		{
 			return new AuthenticodeInspection("Unsigned", false, false, string.Empty, string.Empty, null, null, "No Authenticode signature was found.");
 		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
+		{
+			return new AuthenticodeInspection("Inspection failed", false, false, string.Empty, string.Empty, null, null, "Windows could not read the file's digital signature: " + ex.Message);
+		}
 
-		uint trustResult = VerifyTrust(path);
-		bool trusted = trustResult == 0;
-		DateTimeOffset notBefore = certificate.NotBefore;
-		DateTimeOffset notAfter = certificate.NotAfter;
-		bool expired = DateTimeOffset.Now < notBefore || DateTimeOffset.Now > notAfter;
-		string status = trusted && !expired ? "Signed and trusted" : expired ? "Signed • certificate outside its validity period" : "Signed • trust check failed";
-		string message = trusted
-			? "Windows verified the file's Authenticode signature and certificate chain."
-			: $"Windows trust verification returned 0x{trustResult:X8} ({new Win32Exception(unchecked((int)trustResult)).Message}).";
-		return new AuthenticodeInspection(
-			status,
-			true,
-			trusted && !expired,
-			certificate.GetNameInfo(X509NameType.SimpleName, false).IfEmpty(certificate.Subject),
-			certificate.Thumbprint ?? string.Empty,
-			notBefore,
-			notAfter,
-			message);
+		using (certificate)
+		{
+			uint trustResult;
+			try { trustResult = VerifyTrust(path); }
+			catch (Exception ex) when (ex is Win32Exception or ExternalException)
+			{
+				return new AuthenticodeInspection(
+					"Signed • trust check unavailable", true, false,
+					certificate.GetNameInfo(X509NameType.SimpleName, false).IfEmpty(certificate.Subject),
+					certificate.Thumbprint ?? string.Empty, certificate.NotBefore, certificate.NotAfter,
+					"The signature exists, but Windows trust verification could not finish: " + ex.Message);
+			}
+			bool trusted = trustResult == 0;
+			DateTimeOffset notBefore = certificate.NotBefore;
+			DateTimeOffset notAfter = certificate.NotAfter;
+			bool expired = DateTimeOffset.Now < notBefore || DateTimeOffset.Now > notAfter;
+			string status = trusted && !expired ? "Signed and trusted" : expired ? "Signed • certificate outside its validity period" : "Signed • trust check failed";
+			string message = trusted
+				? "Windows verified the file's Authenticode signature and certificate chain."
+				: $"Windows trust verification returned 0x{trustResult:X8} ({new Win32Exception(unchecked((int)trustResult)).Message}).";
+			return new AuthenticodeInspection(
+				status,
+				true,
+				trusted && !expired,
+				certificate.GetNameInfo(X509NameType.SimpleName, false).IfEmpty(certificate.Subject),
+				certificate.Thumbprint ?? string.Empty,
+				notBefore,
+				notAfter,
+				message);
+		}
 	}
 
 	private static uint VerifyTrust(string path)

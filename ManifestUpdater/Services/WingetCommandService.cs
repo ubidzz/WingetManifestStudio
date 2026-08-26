@@ -123,17 +123,17 @@ internal static class WingetCommandService
 
 	public static Task<CommandResult> ValidateManifestAsync(string manifestFolder, CancellationToken cancellationToken = default)
 	{
-		return RunAsync("winget", ["validate", "--manifest", manifestFolder], manifestFolder, cancellationToken);
+		return RunWithTimeoutAsync("winget", ["validate", "--manifest", manifestFolder], manifestFolder, TimeSpan.FromSeconds(45), cancellationToken);
 	}
 
 	public static Task<CommandResult> SearchExactPackageAsync(string packageIdentifier, CancellationToken cancellationToken = default)
 	{
-		return RunAsync("winget.exe", ["search", "--id", packageIdentifier, "--exact", "--source", "winget", "--accept-source-agreements"], Environment.CurrentDirectory, cancellationToken);
+		return RunWithTimeoutAsync("winget.exe", ["search", "--id", packageIdentifier, "--exact", "--source", "winget", "--accept-source-agreements"], Environment.CurrentDirectory, TimeSpan.FromSeconds(30), cancellationToken);
 	}
 
 	public static Task<CommandResult> ListInstalledPackageAsync(string packageIdentifier, CancellationToken cancellationToken = default)
 	{
-		return RunAsync("winget.exe", ["list", "--id", packageIdentifier, "--exact", "--accept-source-agreements"], Environment.CurrentDirectory, cancellationToken);
+		return RunWithTimeoutAsync("winget.exe", ["list", "--id", packageIdentifier, "--exact", "--accept-source-agreements"], Environment.CurrentDirectory, TimeSpan.FromSeconds(30), cancellationToken);
 	}
 
 	public static InteractiveCommandSession StartManifestInstallSession(string manifestFolder)
@@ -157,17 +157,50 @@ internal static class WingetCommandService
 			"sandbox-test");
 	}
 
-	public static int StartEnableLocalManifestFilesElevated()
+	public static ElevatedCommandSession StartEnableLocalManifestFilesElevated()
 	{
-		const string script = """
+		string resultFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudio", "command-results");
+		Directory.CreateDirectory(resultFolder);
+		string resultPath = Path.Combine(resultFolder, $"enable-local-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.log");
+		string standardOutputPath = resultPath + ".out";
+		string standardErrorPath = resultPath + ".err";
+		string wingetPath = Path.Combine(
+			Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+			"Microsoft", "WindowsApps", "winget.exe");
+		string script = $$"""
+			$ErrorActionPreference = 'Stop'
 			$host.UI.RawUI.WindowTitle = 'Winget Manifest Studio - Enable Local Manifest Testing'
-			Write-Host 'Enabling Winget local manifest testing for this computer...' -ForegroundColor Cyan
-			& winget.exe settings --enable LocalManifestFiles
-			$code = $LASTEXITCODE
+			$resultPath = '{{PowerShellLiteral(resultPath)}}'
+			$standardOutputPath = '{{PowerShellLiteral(standardOutputPath)}}'
+			$standardErrorPath = '{{PowerShellLiteral(standardErrorPath)}}'
+			$wingetPath = '{{PowerShellLiteral(wingetPath)}}'
+			$code = 1
+			$message = ''
+			Write-Host 'Step 1 of 1: Enabling Winget local manifest testing...' -ForegroundColor Cyan
+			Write-Host 'This window closes automatically when Winget finishes.' -ForegroundColor DarkGray
 			Write-Host ''
-			if ($code -eq 0) { Write-Host 'Local manifest testing is enabled.' -ForegroundColor Green }
-			else { Write-Host ('Winget returned exit code ' + $code + '.') -ForegroundColor Red }
-			[void](Read-Host 'Press Enter to close')
+			try {
+				if (-not (Test-Path -LiteralPath $wingetPath)) { throw 'Windows Package Manager (winget.exe) was not found for this Windows account.' }
+				$process = Start-Process -FilePath $wingetPath -ArgumentList @('settings', '--enable', 'LocalManifestFiles') -PassThru -RedirectStandardOutput $standardOutputPath -RedirectStandardError $standardErrorPath
+				if (-not $process.WaitForExit(45000)) {
+					try { Stop-Process -Id $process.Id -Force } catch {}
+					$code = 1460
+					$message = 'Winget did not respond within 45 seconds and was stopped.'
+				} else {
+					$code = $process.ExitCode
+					$message = if ($code -eq 0) { 'Winget reported that local manifest testing is enabled.' } else { 'Winget could not enable local manifest testing.' }
+				}
+			} catch {
+				$code = 1
+				$message = $_.Exception.Message
+			}
+			$output = if (Test-Path -LiteralPath $standardOutputPath) { Get-Content -LiteralPath $standardOutputPath -Raw } else { '' }
+			$errorOutput = if (Test-Path -LiteralPath $standardErrorPath) { Get-Content -LiteralPath $standardErrorPath -Raw } else { '' }
+			@('Exit code: ' + $code, $message, $output, $errorOutput) | Set-Content -LiteralPath $resultPath -Encoding UTF8
+			Write-Host $message -ForegroundColor $(if ($code -eq 0) { 'Green' } else { 'Red' })
+			if ($output) { Write-Host $output }
+			if ($errorOutput) { Write-Host $errorOutput -ForegroundColor Red }
+			Start-Sleep -Seconds 2
 			exit $code
 			""";
 		string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
@@ -184,9 +217,65 @@ internal static class WingetCommandService
 		startInfo.ArgumentList.Add("Bypass");
 		startInfo.ArgumentList.Add("-EncodedCommand");
 		startInfo.ArgumentList.Add(encoded);
-		using Process process = Process.Start(startInfo)
+		Process process = Process.Start(startInfo)
 			?? throw new InvalidOperationException("Windows could not start the administrator confirmation window.");
-		return process.Id;
+		int processId = process.Id;
+		process.Dispose();
+		return new ElevatedCommandSession(processId, resultPath);
+	}
+
+	public static async Task<CommandResult> WaitForElevatedCommandAsync(
+		ElevatedCommandSession session,
+		CancellationToken cancellationToken = default)
+	{
+		// Do not open a handle to the elevated process from the non-elevated Studio.
+		// Windows can reject that with ERROR_ACCESS_DENIED even though the command is
+		// working normally. The elevated helper writes this result file before exit,
+		// so the file is the authoritative and privilege-safe completion signal.
+		while (!File.Exists(session.ResultPath))
+			await Task.Delay(150, cancellationToken);
+
+		string output = await File.ReadAllTextAsync(session.ResultPath, cancellationToken);
+		int exitCode = 1;
+		string? firstLine = output.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').FirstOrDefault();
+		const string exitCodePrefix = "Exit code:";
+		if (firstLine?.StartsWith(exitCodePrefix, StringComparison.OrdinalIgnoreCase) == true)
+			int.TryParse(firstLine[exitCodePrefix.Length..].Trim(), out exitCode);
+		try
+		{
+			File.Delete(session.ResultPath);
+			File.Delete(session.ResultPath + ".out");
+			File.Delete(session.ResultPath + ".err");
+		}
+		catch { }
+		return new CommandResult(exitCode, output, string.Empty);
+	}
+
+	public static async Task<WingetHealthResult> CheckWingetHealthAsync(CancellationToken cancellationToken = default)
+	{
+		using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		timeout.CancelAfter(TimeSpan.FromSeconds(8));
+		try
+		{
+			CommandResult result = await RunAsync("winget.exe", ["--version"], Environment.CurrentDirectory, timeout.Token);
+			string version = result.CombinedOutput.Trim();
+			if (result.ExitCode == 0)
+				return new WingetHealthResult(true, version.IfEmpty("Installed"), 0, "Windows Package Manager is ready.");
+			string code = "0x" + unchecked((uint)result.ExitCode).ToString("X8");
+			string details = result.CombinedOutput.IfEmpty("Winget returned no diagnostic text.");
+			string message = result.ExitCode == unchecked((int)0x8A150001)
+				? $"Windows Package Manager returned an internal error ({code}). Repair or update Microsoft App Installer, then run Check Test Setup again."
+				: $"Windows Package Manager is not ready ({code}). {details}";
+			return new WingetHealthResult(false, string.Empty, result.ExitCode, message);
+		}
+		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+		{
+			return new WingetHealthResult(false, string.Empty, 1460, "Windows Package Manager did not respond within 8 seconds. Repair or update Microsoft App Installer, then try again.");
+		}
+		catch (Exception ex)
+		{
+			return new WingetHealthResult(false, string.Empty, 1, "Windows Package Manager could not start: " + ex.Message);
+		}
 	}
 
 	public static bool IsLocalManifestFilesEnabled()
@@ -276,11 +365,40 @@ internal static class WingetCommandService
 		foreach (string argument in arguments) startInfo.ArgumentList.Add(argument);
 		using Process process = new() { StartInfo = startInfo };
 		if (!process.Start()) throw new InvalidOperationException($"Windows could not start {executable}.");
-		Task<string> output = process.StandardOutput.ReadToEndAsync(cancellationToken);
-		Task<string> error = process.StandardError.ReadToEndAsync(cancellationToken);
-		await process.WaitForExitAsync(cancellationToken);
-		return new CommandResult(process.ExitCode, await output, await error);
+		try
+		{
+			Task<string> output = process.StandardOutput.ReadToEndAsync(cancellationToken);
+			Task<string> error = process.StandardError.ReadToEndAsync(cancellationToken);
+			await process.WaitForExitAsync(cancellationToken);
+			return new CommandResult(process.ExitCode, await output, await error);
+		}
+		catch (OperationCanceledException)
+		{
+			try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+			throw;
+		}
 	}
+
+	private static async Task<CommandResult> RunWithTimeoutAsync(
+		string executable,
+		IEnumerable<string> arguments,
+		string workingDirectory,
+		TimeSpan timeout,
+		CancellationToken cancellationToken)
+	{
+		using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		deadline.CancelAfter(timeout);
+		try
+		{
+			return await RunAsync(executable, arguments, workingDirectory, deadline.Token);
+		}
+		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+		{
+			return new CommandResult(1460, string.Empty, $"{executable} did not respond within {timeout.TotalSeconds:0} seconds and was stopped.");
+		}
+	}
+
+	private static string PowerShellLiteral(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 
 	private static InteractiveCommandSession StartPersistentConsoleSession(
 		string executable,

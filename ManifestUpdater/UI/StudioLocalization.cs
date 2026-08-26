@@ -30,9 +30,12 @@ internal static class StudioLocalization
 		["Add URL-Only Row"] = "Agregar solo URL",
 		["Attach File to Selected"] = "Adjuntar archivo",
 		["Inspect & Fill Details"] = "Inspeccionar y completar",
+		["Inspect & Fill Selected"] = "Inspeccionar selección",
 		["Inspect Local Files"] = "Inspeccionar locales",
+		["Inspect All Local Files"] = "Inspeccionar todos los archivos",
 		["Verify Public URLs"] = "Verificar URL públicas",
 		["Remove"] = "Eliminar",
+		["Remove Selected"] = "Eliminar selección",
 		["Preview Changes"] = "Vista previa",
 		["Save Manifests"] = "Guardar manifiestos",
 		["Validate Locally"] = "Validar localmente",
@@ -49,9 +52,15 @@ internal static class StudioLocalization
 		["Test Install Here"] = "Probar instalación aquí",
 		["Verify Installed Result"] = "Verificar instalación",
 		["Test in Windows Sandbox"] = "Probar en Windows Sandbox",
+		["Enable & Test Install"] = "Habilitar y probar instalación",
+		["Local Testing Enabled"] = "Prueba local habilitada",
+		["Check Test Setup"] = "Comprobar configuración",
+		["Optional: Test in Sandbox"] = "Opcional: probar en Sandbox",
 		["Use Current Project"] = "Usar proyecto actual",
 		["Install WingetCreate"] = "Instalar WingetCreate",
 		["Run"] = "Ejecutar",
+		["Show Optional Fields"] = "Mostrar campos opcionales",
+		["Hide Optional Fields"] = "Ocultar campos opcionales",
 		["PACKAGE WORKSPACE"] = "ÁREA DEL PAQUETE",
 		["PACKAGE IDENTITY"] = "IDENTIDAD DEL PAQUETE",
 		["PUBLIC PACKAGE INFORMATION"] = "INFORMACIÓN PÚBLICA",
@@ -63,6 +72,9 @@ internal static class StudioLocalization
 		["REVIEW BEFORE SAVING"] = "REVISAR ANTES DE GUARDAR",
 		["TEST BEFORE SUBMITTING"] = "PROBAR ANTES DE ENVIAR",
 		["INSTALLATION TESTS REQUIRE YOUR CONFIRMATION"] = "LAS PRUEBAS DE INSTALACIÓN REQUIEREN CONFIRMACIÓN",
+		["FOLLOW THESE TESTS IN ORDER"] = "SIGUE ESTAS PRUEBAS EN ORDEN",
+		["EXTRA CHECKS"] = "COMPROBACIONES ADICIONALES",
+		["FOLLOW THESE INSTALLER STEPS"] = "SIGUE ESTOS PASOS DEL INSTALADOR",
 		["HOW TO USE THIS SOFTWARE"] = "CÓMO USAR ESTE PROGRAMA",
 		["COMMON PROBLEMS"] = "PROBLEMAS COMUNES",
 		["Language"] = "Idioma",
@@ -91,6 +103,21 @@ internal static class StudioLocalization
 	public static string Translate(string english, string language)
 	{
 		if (!language.Equals("es-ES", StringComparison.OrdinalIgnoreCase)) return english;
-		return Spanish.GetValueOrDefault(english, english);
+		if (Spanish.TryGetValue(english, out string? translated)) return translated;
+		int prefixLength = 0;
+		while (prefixLength < english.Length && char.IsDigit(english[prefixLength])) prefixLength++;
+		if (prefixLength > 0 && prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength]))
+		{
+			while (prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength])) prefixLength++;
+			string action = english[prefixLength..];
+			if (Spanish.TryGetValue(action, out translated)) return english[..prefixLength] + translated;
+		}
+		const string requiredSuffix = "  * Required";
+		if (english.EndsWith(requiredSuffix, StringComparison.Ordinal))
+		{
+			string field = english[..^requiredSuffix.Length];
+			return Spanish.GetValueOrDefault(field, field) + "  * Obligatorio";
+		}
+		return english;
 	}
 }

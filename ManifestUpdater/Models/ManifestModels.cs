@@ -169,3 +169,7 @@ public sealed record CommandResult(int ExitCode, string Output, string Error)
 		Environment.NewLine,
 		new[] { Output.Trim(), Error.Trim() }.Where(value => value.Length > 0));
 }
+
+public sealed record WingetHealthResult(bool IsReady, string Version, int ExitCode, string Message);
+
+internal sealed record ElevatedCommandSession(int ProcessId, string ResultPath);

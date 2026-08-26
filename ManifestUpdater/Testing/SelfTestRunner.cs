@@ -24,8 +24,14 @@ internal static class SelfTestRunner
 			TestTestingEnvironmentChecks(results);
 			TestRepositoryPathAndLocalization(results);
 			TestProfileRoundTrip(root, results);
+			TestSessionRecoveryAndRecentProjects(root, results);
 			await TestInstallerInspectionAsync(results);
-			TestAuthenticodeInspection(results);
+			await TestElevatedResultFileMonitoringAsync(root, results);
+			await TestWingetHealthDiagnosticAsync(results);
+			TestAuthenticodeInspection(root, results);
+			int installerIndex = Array.FindIndex(args, argument => string.Equals(argument, "--verify-installer", StringComparison.OrdinalIgnoreCase));
+			if (installerIndex >= 0 && installerIndex + 1 < args.Length)
+				await TestRealInstallerAsync(args[installerIndex + 1], results);
 			int verifyIndex = Array.FindIndex(args, argument => string.Equals(argument, "--verify-folder", StringComparison.OrdinalIgnoreCase));
 			if (verifyIndex >= 0 && verifyIndex + 1 < args.Length)
 			{
@@ -180,6 +186,14 @@ ManifestVersion: 1.12.0
 		results.Add("PASS: local-manifest and Windows Sandbox readiness checks are non-invasive.");
 	}
 
+	private static async Task TestWingetHealthDiagnosticAsync(List<string> results)
+	{
+		WingetHealthResult health = await WingetCommandService.CheckWingetHealthAsync();
+		Assert(!string.IsNullOrWhiteSpace(health.Message), "The Winget health check must always return a beginner-readable result.");
+		Assert(health.IsReady || health.ExitCode != 0, "A failed Winget health check must retain the diagnostic exit code.");
+		results.Add("PASS: Winget health failures are diagnosed before local-test setup opens.");
+	}
+
 	private static void TestRepositoryPathAndLocalization(List<string> results)
 	{
 		Assert(WingetRepositoryService.BuildRepositoryPath("Microsoft.VisualStudioCode") == "manifests/m/Microsoft/VisualStudioCode",
@@ -189,12 +203,63 @@ ManifestVersion: 1.12.0
 		results.Add("PASS: repository discovery path and English/Spanish localization resources.");
 	}
 
-	private static void TestAuthenticodeInspection(List<string> results)
+	private static void TestAuthenticodeInspection(string root, List<string> results)
 	{
 		string executable = Environment.ProcessPath ?? throw new InvalidOperationException("The self-test executable path is unavailable.");
 		AuthenticodeInspection signature = AuthenticodeInspector.Inspect(executable);
 		Assert(!string.IsNullOrWhiteSpace(signature.Status), "Authenticode inspection must always return a clear status.");
-		results.Add("PASS: Authenticode signature and Windows trust inspection.");
+		string unsignedPath = Path.Combine(root, "definitely-unsigned.exe");
+		File.WriteAllText(unsignedPath, "This is deliberately not a signed executable.");
+		AuthenticodeInspection unsigned = AuthenticodeInspector.Inspect(unsignedPath);
+		Assert(unsigned.Status == "Unsigned" && !unsigned.IsSigned && !unsigned.IsTrusted,
+			"An unsigned local file must finish inspection with the explicit Unsigned result.");
+		results.Add("PASS: Authenticode inspection clearly distinguishes unsigned files from signed files.");
+	}
+
+	private static void TestSessionRecoveryAndRecentProjects(string root, List<string> results)
+	{
+		string stateRoot = Path.Combine(root, "local-state");
+		string firstFolder = Path.Combine(root, "recent-one");
+		string missingFolder = Path.Combine(root, "recent-missing");
+		Directory.CreateDirectory(firstFolder);
+		StudioStateStore.StateFolderOverride = stateRoot;
+		try
+		{
+			ManifestProject saved = SampleProject(firstFolder);
+			StudioStateStore.SaveRecovery(saved);
+			ManifestProject? recovered = StudioStateStore.LoadRecovery();
+			Assert(recovered is not null
+				&& recovered.PackageIdentifier == saved.PackageIdentifier
+				&& recovered.Installers.Count == saved.Installers.Count,
+				"Last-session recovery must restore project fields and installer rows.");
+
+			StudioStateStore.SaveRecovery(new ManifestProject());
+			ManifestProject? afterBlankClose = StudioStateStore.LoadRecovery();
+			Assert(afterBlankClose?.PackageIdentifier == saved.PackageIdentifier,
+				"Closing an untouched blank window must not erase the prior recoverable session.");
+
+			StudioStateStore.AddRecentFolder(missingFolder);
+			StudioStateStore.AddRecentFolder(firstFolder);
+			IReadOnlyList<string> recent = StudioStateStore.GetRecentFolders();
+			Assert(recent.Count == 1 && Path.GetFullPath(recent[0]) == Path.GetFullPath(firstFolder),
+				"Recent projects must retain valid folders and hide folders that no longer exist.");
+			results.Add("PASS: last-session recovery and recent-project state are durable and safe.");
+		}
+		finally
+		{
+			StudioStateStore.StateFolderOverride = null;
+		}
+	}
+
+	private static async Task TestElevatedResultFileMonitoringAsync(string root, List<string> results)
+	{
+		string resultPath = Path.Combine(root, "elevated-result.log");
+		await File.WriteAllTextAsync(resultPath, "Exit code: 0\r\nLocal manifest testing enabled.");
+		CommandResult result = await WingetCommandService.WaitForElevatedCommandAsync(
+			new ElevatedCommandSession(Environment.ProcessId, resultPath));
+		Assert(result.ExitCode == 0 && result.CombinedOutput.Contains("enabled", StringComparison.OrdinalIgnoreCase),
+			"The one-time administrator step must use its result file without opening the elevated process handle.");
+		results.Add("PASS: administrator command completion is monitored without an access-denied process handle.");
 	}
 
 	private static void TestNewProject(string root, List<string> results)
@@ -373,6 +438,15 @@ ManifestVersion: 1.12.0
 		Assert(inspection.Sha256.Length == 64, "Installer inspection must calculate SHA-256.");
 		Assert(inspection.InstallerType is "exe" or "inno" or "nullsoft", "An executable must be identified as a supported EXE installer type.");
 		results.Add("PASS: local installer inspection and hashing.");
+	}
+
+	private static async Task TestRealInstallerAsync(string path, List<string> results)
+	{
+		Assert(File.Exists(path), "The supplied installer verification file does not exist.");
+		InstallerInspection inspection = await InstallerInspector.InspectAsync(path, string.Empty);
+		Assert(inspection.Sha256.Length == 64, "The supplied installer did not produce a SHA-256 hash.");
+		Assert(inspection.Signature.Status.Length > 0, "The supplied installer did not produce a digital-signature result.");
+		results.Add($"PASS: real installer inspection completed: {Path.GetFileName(path)}, {inspection.InstallerType}, {inspection.Signature.Status}.");
 	}
 
 	private static void TestRealManifestFolder(string folder, List<string> results)

@@ -15,6 +15,11 @@ public partial class MainForm : Form
 	private static readonly Color MutedColor = StudioPalette.SecondaryText;
 	private static readonly Color AccentColor = StudioPalette.Accent;
 	private static readonly Color SuccessColor = StudioPalette.Success;
+	private static readonly HashSet<string> RequiredProjectFields = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"PackageIdentifier", "PackageVersion", "DefaultLocale", "ManifestVersion", "ManifestFolder",
+		"PackageName", "Publisher", "License", "ShortDescription", "InstallerType", "Scope", "UpgradeBehavior"
+	};
 
 	private ManifestProject project = new();
 	private enum ReviewProgress { Editing, Previewed, Saved, ValidationFailed, Validated }
@@ -23,6 +28,8 @@ public partial class MainForm : Form
 	private RichTextBox previewBox = null!;
 	private RichTextBox toolOutputBox = null!;
 	private RichTextBox testOutputBox = null!;
+	private Label testPlanLabel = null!;
+	private FlowLayoutPanel optionalProjectFieldsPanel = null!;
 	private StudioComboBox toolCommandBox = null!;
 	private StudioComboBox languageBox = null!;
 	private StudioTextBox toolArgumentsBox = null!;
@@ -32,6 +39,10 @@ public partial class MainForm : Form
 	private Button saveButton = null!;
 	private Button validateButton = null!;
 	private Button testCenterButton = null!;
+	private Button safePreflightButton = null!;
+	private Button enableLocalTestingButton = null!;
+	private Button testInstallHereButton = null!;
+	private Button verifyInstalledResultButton = null!;
 	private Button submitButton = null!;
 	private Button previewModeButton = null!;
 	private Button toolRunButton = null!;
@@ -51,6 +62,7 @@ public partial class MainForm : Form
 	private System.Windows.Forms.Timer? wingetCreateStartupTimer;
 	private System.Windows.Forms.Timer? tokenStatusTimer;
 	private System.Windows.Forms.Timer? recoveryTimer;
+	private ContextMenuStrip? recentProjectsMenu;
 	private string latestTestReport = "No test report has been generated yet.";
 	private readonly Dictionary<Control, string> originalInterfaceText = new(ReferenceEqualityComparer.Instance);
 	private bool applyingLanguage;
@@ -62,6 +74,11 @@ public partial class MainForm : Form
 	private bool showingTechnicalPreview;
 	private bool workspaceInitialized;
 	private bool applyingProjectToControls;
+	private WingetHealthResult? wingetHealth;
+	private bool testEnvironmentCheckRunning;
+	private DateTimeOffset wingetHealthCheckedAt;
+	private string successfulLocalInstallFingerprint = string.Empty;
+	private string verifiedInstalledFingerprint = string.Empty;
 
 	public MainForm() : this(false)
 	{
@@ -91,47 +108,17 @@ public partial class MainForm : Form
 		AttachWindowDrag(subtitleLabel);
 		if (System.ComponentModel.LicenseManager.UsageMode != System.ComponentModel.LicenseUsageMode.Designtime)
 		{
-			if (uiTestMode)
-				InitializeWorkspaceControls();
-			else
-			{
-				modeLabel.Text = "OPENING WORKSPACE";
-				statusLabel.Text = "Opening Winget Manifest Studio...";
-				busyProgress.Visible = true;
-				toolLoadingProgress.Visible = true;
-			}
+			// The complete visual tree must exist before Windows shows the form. Building
+			// pages after Shown exposes half-laid-out controls and produces the broken
+			// first-paint state reported on clean launches.
+			InitializeWorkspaceControls();
 			Shown += MainForm_Shown;
 		}
 	}
 
 	private void MainForm_Shown(object? sender, EventArgs e)
 	{
-		if (!uiTestMode && !workspaceInitialized)
-		{
-			// Let Windows paint the lightweight designer shell before constructing the
-			// larger editor pages. The application therefore becomes visible immediately.
-			Refresh();
-			BeginInvoke(new Action(CompleteStartupAfterFirstPaint));
-			return;
-		}
-
 		CompleteStartup();
-	}
-
-	private void CompleteStartupAfterFirstPaint()
-	{
-		if (IsDisposed || Disposing) return;
-		try
-		{
-			InitializeWorkspaceControls();
-			CompleteStartup();
-		}
-		catch (Exception ex)
-		{
-			busyProgress.Visible = false;
-			toolLoadingProgress.Visible = false;
-			ShowError("Startup could not finish", ex);
-		}
 	}
 
 	private void InitializeWorkspaceControls()
@@ -211,6 +198,8 @@ public partial class MainForm : Form
 		recoveryTimer?.Stop();
 		recoveryTimer?.Dispose();
 		recoveryTimer = null;
+		recentProjectsMenu?.Dispose();
+		recentProjectsMenu = null;
 		fieldErrors.Dispose();
 		base.OnFormClosed(eventArgs);
 	}
@@ -321,7 +310,11 @@ public partial class MainForm : Form
 		{
 			navigationPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / pages.Length));
 			StudioNavButton button = new() { Text = navigationLabels.GetValueOrDefault(page.Text, page.Text), Tag = page, AccessibleName = page.Text + " page" };
-			button.Click += (_, _) => workspaceTabs.SelectedTab = page;
+			button.Click += async (_, _) =>
+			{
+				workspaceTabs.SelectedTab = page;
+				if (page.Text == "Test Center") await RefreshTestEnvironmentAsync(showReport: false);
+			};
 			navigationButtons[page.Text] = button;
 			navigationPanel.Controls.Add(button, navigationPanel.Controls.Count, 0);
 		}
@@ -385,7 +378,7 @@ public partial class MainForm : Form
 			("Open Installers & Hashes", (_, _) => SelectTab("Installers & Hashes"))));
 		content.Controls.Add(CreateWorkflowCard("3", "Review before anything is changed", "Preview builds all three manifests in memory. Save writes them only after validation and keeps timestamped backups of files that already exist.",
 			("Open Preview & Submit", (_, _) => SelectTab("Preview & Submit"))));
-		content.Controls.Add(CreateWorkflowCard("4", "Validate, test-install, and submit", "Run the safe preflight checks, test the generated manifest locally or in Windows Sandbox, verify the installed result, and only then use WingetCreate to open the pull request.",
+		content.Controls.Add(CreateWorkflowCard("4", "Test in the numbered order, then submit", "Open Test Center and follow its numbered status panel: 1 Safe Preflight, 2 Enable Local Testing once, 3 Test Install Here, and 4 Verify Installed Result. Each step explains the next action and stops before changing the computer without confirmation.",
 			("Open Test Center", (_, _) => SelectTab("Test Center")),
 			("Open Official Tools", (_, _) => SelectTab("Official Tool Commands"))));
 		content.Controls.Add(CreateWorkflowCard("?", "Need help?", "Open the built-in beginner guide for field meanings, installer IDs, hashes, validation, and submission.",
@@ -440,7 +433,20 @@ public partial class MainForm : Form
 			Field("ReleaseNotesUrl", "Release notes URL"),
 			Field("ReleaseNotes", "Release notes", multiline: true),
 			Field("InstallationNotes", "Installation notes", "Shown to the user after installation", multiline: true)));
-		content.Controls.Add(CreateSection("INSTALLER BEHAVIOR", "Optional current Winget schema fields. Leave a field blank when it does not apply.",
+		content.Controls.Add(CreateWorkflowCard("+", "Optional advanced package fields", "Most beginners do not need installer behavior overrides, custom switches, or raw advanced YAML. Open this section only when the installer documentation or an existing manifest requires one of these values.",
+			("Show Optional Fields", (sender, _) => ToggleOptionalProjectFields(sender as Button))));
+		optionalProjectFieldsPanel = new FlowLayoutPanel
+		{
+			Width = 1160,
+			AutoSize = true,
+			AutoSizeMode = AutoSizeMode.GrowAndShrink,
+			FlowDirection = FlowDirection.TopDown,
+			WrapContents = false,
+			BackColor = PageColor,
+			Margin = Padding.Empty,
+			Visible = false
+		};
+		optionalProjectFieldsPanel.Controls.Add(CreateSection("INSTALLER BEHAVIOR", "Optional current Winget schema fields. Leave a field blank when it does not apply.",
 			Field("Channel", "Channel", "Example: stable or beta"),
 			Field("InstallerLocale", "Installer locale", "Example: en-US"),
 			Field("Platform", "Platforms", "Comma-separated; usually Windows.Desktop"),
@@ -459,7 +465,7 @@ public partial class MainForm : Form
 			Field("DisplayInstallWarnings", "Display install warnings", "true, false, or blank"),
 			Field("DownloadCommandProhibited", "Prohibit download command", "true, false, or blank"),
 			Field("ArchiveBinariesDependOnPath", "Archive binaries depend on PATH", "true, false, or blank")));
-		content.Controls.Add(CreateSection("INSTALLER SWITCHES", "Winget uses these command-line switches for installer actions. Known Inno, Nullsoft, MSI, and MSIX types often need no custom values.",
+		optionalProjectFieldsPanel.Controls.Add(CreateSection("INSTALLER SWITCHES", "Winget uses these command-line switches for installer actions. Known Inno, Nullsoft, MSI, and MSIX types often need no custom values.",
 			Field("SwitchSilent", "Silent switch"),
 			Field("SwitchSilentWithProgress", "Silent with progress"),
 			Field("SwitchInteractive", "Interactive switch"),
@@ -468,36 +474,59 @@ public partial class MainForm : Form
 			Field("SwitchUpgrade", "Upgrade switch"),
 			Field("CustomInstallerSwitch", "Custom switch"),
 			Field("SwitchRepair", "Repair switch")));
-		content.Controls.Add(CreateSection("ALL OTHER SCHEMA FIELDS", "For uncommon nested fields such as dependencies, agreements, documentation, icons, markets, expected return codes, nested files, and installation metadata. These optional boxes accept a YAML Field: value mapping and are checked before previewing.",
+		optionalProjectFieldsPanel.Controls.Add(CreateSection("ALL OTHER SCHEMA FIELDS", "For uncommon nested fields such as dependencies, agreements, documentation, icons, markets, expected return codes, nested files, and installation metadata. These optional boxes accept a YAML Field: value mapping and are checked before previewing.",
 			Field("AdvancedLocaleFieldsYaml", "Additional locale fields", "Optional advanced YAML mapping", multiline: true, width: 520),
 			Field("AdvancedInstallerFieldsYaml", "Additional installer fields", "Optional advanced YAML mapping", multiline: true, width: 520)));
+		optionalProjectFieldsPanel.ClientSizeChanged += (_, _) =>
+		{
+			int width = Math.Max(820, optionalProjectFieldsPanel.ClientSize.Width - optionalProjectFieldsPanel.Padding.Horizontal);
+			foreach (Control section in optionalProjectFieldsPanel.Controls)
+				if (section.Width != width) section.Width = width;
+		};
+		content.Controls.Add(optionalProjectFieldsPanel);
 		root.Controls.Add(content, 0, 2);
 		page.Controls.Add(root);
 		return page;
+	}
+
+	private void ToggleOptionalProjectFields(Button? button)
+	{
+		optionalProjectFieldsPanel.Visible = !optionalProjectFieldsPanel.Visible;
+		if (button is not null)
+		{
+			button.Text = optionalProjectFieldsPanel.Visible ? "Hide Optional Fields" : "Show Optional Fields";
+			button.AccessibleName = button.Text;
+		}
+		optionalProjectFieldsPanel.Parent?.PerformLayout();
+		SetStatus(optionalProjectFieldsPanel.Visible
+			? "Optional advanced fields are open. Leave anything you do not recognize blank."
+			: "Optional advanced fields are hidden. Their saved values are preserved.");
 	}
 
 	private TabPage BuildInstallersTab()
 	{
 		TabPage page = NewPage("Installers & Hashes");
 		TableLayoutPanel root = NewRoot();
-		root.RowCount = 4;
+		root.RowCount = 5;
+		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.Controls.Add(CreateInfoStrip("INSTALLER DETAILS ARE AUTOMATIC", "Add or attach a local installer and the Studio calculates its SHA-256, detects its type and architecture, and reads ProductCode and UpgradeCode directly from MSI files. For EXE, Inno, and Nullsoft installers these fields are optional and are left blank when the installer does not provide them."), 0, 0);
+		root.Controls.Add(CreateInfoStrip("FOLLOW THESE INSTALLER STEPS", "1 Add the exact local release file. 2 Paste its direct public HTTPS download URL into that row. 3 Select the row and inspect it. 4 Verify Public URLs after uploading the release. Hash, type, architecture, and supported MSI identity values are filled automatically."), 0, 0);
 		root.Controls.Add(CreateToolbar(
-			("Add Release Files", async (_, _) => await AddInstallerFilesAsync()),
+			("1 Add Release Files", async (_, _) => await AddInstallerFilesAsync()),
+			("3 Inspect & Fill Selected", async (_, _) => await InspectSelectedAsync()),
+			("4 Verify Public URLs", async (_, _) => await VerifyPublicUrlsAsync())), 0, 1);
+		root.Controls.Add(CreateToolbar(
 			("Add URL-Only Row", (_, _) => AddUrlInstaller()),
 			("Attach File to Selected", async (_, _) => await AttachFileToSelectedAsync()),
-			("Inspect & Fill Details", async (_, _) => await InspectSelectedAsync()),
-			("Inspect Local Files", async (_, _) => await InspectAllLocalAsync()),
-			("Verify Public URLs", async (_, _) => await VerifyPublicUrlsAsync()),
-			("Remove", (_, _) => RemoveSelectedInstaller())), 0, 1);
+			("Inspect All Local Files", async (_, _) => await InspectAllLocalAsync()),
+			("Remove Selected", (_, _) => RemoveSelectedInstaller())), 0, 2);
 
 		installerGrid = CreateInstallerGrid();
-		root.Controls.Add(installerGrid, 0, 2);
-		root.Controls.Add(CreateInstallerDefaults(), 0, 3);
+		root.Controls.Add(installerGrid, 0, 3);
+		root.Controls.Add(CreateInstallerDefaults(), 0, 4);
 		page.Controls.Add(root);
 		return page;
 	}
@@ -515,16 +544,16 @@ public partial class MainForm : Form
 		root.Controls.Add(CreateInfoStrip("WHAT DO I DO NEXT?", "Follow the highlighted next step. The Studio will say NOTHING NEEDS FIXING when the required information is ready, or list exactly what must be corrected and where to find it."), 0, 0);
 		root.Controls.Add(CreateReadinessPanel(), 0, 1);
 		TableLayoutPanel actions = (TableLayoutPanel)CreateToolbar(
-			("Preview Changes", (_, _) => GeneratePreview()),
-			("Save Manifests", (_, _) => SaveManifests()),
-			("Validate Locally", async (_, _) => await ValidateWithWingetAsync()),
-			("Open Test Center", (_, _) => SelectTab("Test Center")),
-			("Submit to Winget", async (_, _) => await SubmitAsync()));
-		previewButton = actions.Controls.OfType<Button>().First(button => button.Text == "Preview Changes");
-		saveButton = actions.Controls.OfType<Button>().First(button => button.Text == "Save Manifests");
-		validateButton = actions.Controls.OfType<Button>().First(button => button.Text == "Validate Locally");
-		testCenterButton = actions.Controls.OfType<Button>().First(button => button.Text == "Open Test Center");
-		submitButton = actions.Controls.OfType<Button>().First(button => button.Text == "Submit to Winget");
+			("1 Preview Changes", (_, _) => GeneratePreview()),
+			("2 Save Manifests", (_, _) => SaveManifests()),
+			("3 Validate Locally", async (_, _) => await ValidateWithWingetAsync()),
+			("4 Open Test Center", (_, _) => SelectTab("Test Center")),
+			("5 Submit to Winget", async (_, _) => await SubmitAsync()));
+		previewButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("1 ", StringComparison.Ordinal));
+		saveButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("2 ", StringComparison.Ordinal));
+		validateButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("3 ", StringComparison.Ordinal));
+		testCenterButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("4 ", StringComparison.Ordinal));
+		submitButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("5 ", StringComparison.Ordinal));
 		root.Controls.Add(actions, 0, 2);
 		TableLayoutPanel supportingActions = (TableLayoutPanel)CreateToolbar(
 			("Open Output Folder", (_, _) => OpenOutputFolder()),
@@ -575,9 +604,9 @@ public partial class MainForm : Form
 			("Save or Validate", (_, _) => SelectTab("Preview & Submit"))));
 		content.Controls.Add(CreateWorkflowCard("9", "Validate before submission", "Validate Locally runs the official Winget validator against a clean temporary copy. If it reports an error, fix the related field and validate again. Validation does not modify the saved manifests.",
 			("Open Validation", (_, _) => SelectTab("Preview & Submit"))));
-		content.Controls.Add(CreateWorkflowCard("10", "Run the complete safe preflight", "The Test Center rechecks attached file hashes and Authenticode signatures, runs official validation, and searches Winget plus microsoft/winget-pkgs for the exact package identifier. Export the report if you need to keep evidence of the checks.",
+		content.Controls.Add(CreateWorkflowCard("10", "Run test step 1 — Safe Preflight", "The Test Center first checks whether Winget itself works, then rechecks attached file hashes and signatures, runs official validation, and searches Winget plus microsoft/winget-pkgs for the exact package identifier. It does not install anything.",
 			("Open Test Center", (_, _) => SelectTab("Test Center"))));
-		content.Controls.Add(CreateWorkflowCard("11", "Test the real installation", "Enable Local Testing once, then Test Install Here runs winget install --manifest in a persistent console. It can change this computer. Verify Installed Result checks that Windows reports the expected package identifier and version.",
+		content.Controls.Add(CreateWorkflowCard("11", "Run test steps 2, 3, and 4", "Enable Local Testing requests the one-time Windows administrator approval and the Studio verifies the result automatically. Test Install Here validates again before running winget install --manifest. Verify Installed Result checks the exact package identifier and version.",
 			("Open Installation Tests", (_, _) => SelectTab("Test Center"))));
 		content.Controls.Add(CreateWorkflowCard("12", "Use Windows Sandbox when available", "Test in Windows Sandbox downloads Microsoft's official SandboxTest.ps1 and installs the generated manifests inside a disposable environment. The first run can take several minutes while Microsoft dependencies are prepared.",
 			("Open Sandbox Test", (_, _) => SelectTab("Test Center"))));
@@ -592,36 +621,45 @@ public partial class MainForm : Form
 	{
 		TabPage page = NewPage("Test Center");
 		TableLayoutPanel root = NewRoot();
-		root.RowCount = 5;
+		root.RowCount = 6;
+		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-		root.Controls.Add(CreateInfoStrip("TEST BEFORE SUBMITTING", "Safe Preflight checks YAML, hashes, signatures, official Winget validation, and whether the package already exists. Install tests are separate because they can change the computer."), 0, 0);
+		root.Controls.Add(CreateInfoStrip("FOLLOW THESE TESTS IN ORDER", "The status panel tells you exactly what is ready and what to do next. Test Install Here automatically checks Winget, runs Safe Preflight when needed, and offers to enable local manifests."), 0, 0);
+		root.Controls.Add(CreateTestPlanPanel(), 0, 1);
+		TableLayoutPanel requiredTests = (TableLayoutPanel)CreateToolbar(
+			("1 Run Safe Preflight", async (_, _) => await RunSafePreflightAsync()),
+			("2 Enable Local Testing", async (_, _) => await EnableLocalManifestTestingAsync()),
+			("3 Test Install Here", async (_, _) => await TestInstallHereAsync()),
+			("4 Verify Installed Result", async (_, _) => await VerifyInstalledResultAsync()));
+		safePreflightButton = requiredTests.Controls.OfType<Button>().First(button => button.Text.StartsWith("1 ", StringComparison.Ordinal));
+		enableLocalTestingButton = requiredTests.Controls.OfType<Button>().First(button => button.Text.StartsWith("2 ", StringComparison.Ordinal));
+		testInstallHereButton = requiredTests.Controls.OfType<Button>().First(button => button.Text.StartsWith("3 ", StringComparison.Ordinal));
+		verifyInstalledResultButton = requiredTests.Controls.OfType<Button>().First(button => button.Text.StartsWith("4 ", StringComparison.Ordinal));
+		root.Controls.Add(requiredTests, 0, 2);
+		root.Controls.Add(CreateInfoStrip("EXTRA CHECKS", "Check Test Setup diagnoses Winget before opening any console. Signature, repository, Sandbox, and report tools are useful checks, but the numbered buttons above are the required local-install order."), 0, 3);
 		root.Controls.Add(CreateToolbar(
-			("Run Safe Preflight", async (_, _) => await RunSafePreflightAsync()),
+			("Check Test Setup", async (_, _) => await RefreshTestEnvironmentAsync(showReport: true)),
 			("Inspect Signatures", async (_, _) => await InspectSignaturesAsync()),
 			("Find Existing Package", async (_, _) => await FindExistingPackageAsync()),
-			("Export Test Report", async (_, _) => await ExportTestReportAsync())), 0, 1);
-		root.Controls.Add(CreateInfoStrip("INSTALLATION TESTS REQUIRE YOUR CONFIRMATION", "Test Install Here runs winget install --manifest and may install or elevate software on this PC. Test in Sandbox downloads and runs Microsoft's official SandboxTest.ps1 in a disposable Windows Sandbox."), 0, 2);
-		root.Controls.Add(CreateToolbar(
-			("Enable Local Testing", (_, _) => EnableLocalManifestTesting()),
-			("Test Install Here", async (_, _) => await TestInstallHereAsync()),
-			("Verify Installed Result", async (_, _) => await VerifyInstalledResultAsync()),
-			("Test in Windows Sandbox", async (_, _) => await TestInSandboxAsync())), 0, 3);
+			("Optional: Test in Sandbox", async (_, _) => await TestInSandboxAsync()),
+			("Export Test Report", async (_, _) => await ExportTestReportAsync())), 0, 4);
 		testOutputBox = NewRichTextBox();
 		testOutputBox.ReadOnly = true;
 		testOutputBox.DetectUrls = true;
 		testOutputBox.Font = new Font("Cascadia Mono", 9F);
-		testOutputBox.Text = "Run Safe Preflight when the package details and installer rows are ready. No installer is launched by the safe checks.";
+		testOutputBox.Text = "Start with 1 Run Safe Preflight. It checks the manifest without installing anything. Then follow steps 2, 3, and 4 in order.";
 		testOutputBox.LinkClicked += (_, eventArgs) =>
 		{
 			if (!uiTestMode && Uri.TryCreate(eventArgs.LinkText, UriKind.Absolute, out Uri? uri))
 				Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
 		};
-		root.Controls.Add(testOutputBox, 0, 4);
+		root.Controls.Add(testOutputBox, 0, 5);
 		page.Controls.Add(root);
+		UpdateTestPlanStatus();
 		return page;
 	}
 
@@ -692,16 +730,29 @@ public partial class MainForm : Form
 	private void RestoreLastSession()
 	{
 		if (uiTestMode) { SetStatus("TEST: Last-session recovery opened safely."); return; }
-		ManifestProject? recovered = StudioStateStore.LoadRecovery();
-		if (recovered is null)
+		try
 		{
-			MessageBox.Show(this, "There is no recoverable session on this computer yet.", "Restore last session", MessageBoxButtons.OK, MessageBoxIcon.Information);
-			return;
+			ManifestProject? recovered = StudioStateStore.LoadRecovery();
+			if (recovered is null)
+			{
+				MessageBox.Show(this, "There is no recoverable session on this computer yet.", "Restore last session", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+			ApplyRecoveredProject(recovered);
 		}
+		catch (Exception ex) { ShowError("The last session could not be restored", ex); }
+	}
+
+	private void ApplyRecoveredProject(ManifestProject recovered)
+	{
 		project = recovered;
 		ApplyProjectToControls();
 		SelectTab("Package Details");
-		SetStatus("The last editing session was restored. Review installer paths before saving.");
+		int missingFiles = project.Installers.Count(installer =>
+			!string.IsNullOrWhiteSpace(installer.LocalFile) && !File.Exists(installer.LocalFile));
+		string identity = string.Join(' ', new[] { project.PackageIdentifier, project.PackageVersion }.Where(value => !string.IsNullOrWhiteSpace(value)));
+		SetStatus($"Restored {identity.IfEmpty("the last project")} with {project.Installers.Count} installer(s)."
+			+ (missingFiles > 0 ? $" Reattach {missingFiles} local file(s) that moved." : " Local installer paths are available."));
 	}
 
 	private void ShowRecentProjects(Control? anchor)
@@ -713,15 +764,24 @@ public partial class MainForm : Form
 			MessageBox.Show(this, "No recent manifest folders are available yet.", "Recent projects", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
 		}
-		ContextMenuStrip menu = new() { ShowImageMargin = false, BackColor = CardColor, ForeColor = Color.White, Renderer = new StudioMenuRenderer() };
+		ContextMenuStrip menu = PrepareRecentProjectsMenu(folders);
+		menu.Show(anchor, new Point(0, anchor.Height + 2));
+	}
+
+	private ContextMenuStrip PrepareRecentProjectsMenu(IReadOnlyList<string> folders)
+	{
+		recentProjectsMenu ??= new ContextMenuStrip { ShowImageMargin = false, BackColor = CardColor, ForeColor = Color.White, Renderer = new StudioMenuRenderer() };
+		ContextMenuStrip menu = recentProjectsMenu;
+		menu.Items.Clear();
 		foreach (string folder in folders)
 		{
 			ToolStripMenuItem item = new(folder) { ToolTipText = folder };
 			item.Click += async (_, _) => await LoadManifestFolderAsync(folder);
 			menu.Items.Add(item);
 		}
-		menu.Closed += (_, _) => menu.Dispose();
-		menu.Show(anchor, new Point(0, anchor.Height + 2));
+		// Keep the menu alive until the form closes. Disposing it from Closed races
+		// with WinForms' own dropdown-closing message and crashes the application.
+		return menu;
 	}
 
 	private void SuggestPackageIdentifier()
@@ -1346,6 +1406,14 @@ public partial class MainForm : Form
 			SetStatus("TEST: Safe Preflight completed without changing the computer.");
 			return true;
 		}
+		if (!await RefreshTestEnvironmentAsync(showReport: false))
+		{
+			testOutputBox.Text = "STEP 1 CANNOT RUN\r\n\r\n" + (wingetHealth?.Message ?? "Windows Package Manager is not ready.")
+				+ "\r\n\r\nNEXT: Choose Check Test Setup and follow the repair instructions.";
+			latestTestReport = testOutputBox.Text;
+			SelectTab("Test Center");
+			return false;
+		}
 
 		string? cleanFolder = null;
 		StringBuilder report = new();
@@ -1451,21 +1519,40 @@ public partial class MainForm : Form
 		{
 			SetBusy(true, "Inspecting digital signatures...");
 			ReadProjectFromControls();
-			StringBuilder report = new("AUTHENTICODE SIGNATURE INSPECTION\r\n\r\n");
+			StringBuilder report = new("DIGITAL SIGNATURE RESULTS\r\n\r\nSigned software identifies its publisher. Unsigned is a completed result, not a test still running.\r\n\r\n");
+			int unsignedCount = 0;
+			int signedCount = 0;
 			for (int index = 0; index < project.Installers.Count; index++)
 			{
 				InstallerArtifact item = project.Installers[index];
 				if (!File.Exists(item.LocalFile))
 				{
+					item.SignatureStatus = "Not checked — attach local file";
+					item.SignerName = string.Empty;
+					item.SignerThumbprint = string.Empty;
+					item.SignatureExpiration = string.Empty;
 					report.AppendLine($"Installer {index + 1}: no local file is attached.");
 					continue;
 				}
-				InstallerInspection inspection = await InstallerInspector.InspectAsync(item.LocalFile, string.Empty, null, operationCancellation!.Token);
-				AuthenticodeInspection signature = inspection.Signature;
-				item.SignatureSha256 = inspection.SignatureSha256;
+				AuthenticodeInspection signature;
+				if (Path.GetExtension(item.LocalFile).Equals(".msix", StringComparison.OrdinalIgnoreCase)
+					|| Path.GetExtension(item.LocalFile).Equals(".appx", StringComparison.OrdinalIgnoreCase)
+					|| Path.GetExtension(item.LocalFile).Equals(".msixbundle", StringComparison.OrdinalIgnoreCase)
+					|| Path.GetExtension(item.LocalFile).Equals(".appxbundle", StringComparison.OrdinalIgnoreCase))
+				{
+					InstallerInspection inspection = await InstallerInspector.InspectAsync(item.LocalFile, string.Empty, null, operationCancellation!.Token);
+					signature = inspection.Signature;
+					item.SignatureSha256 = inspection.SignatureSha256;
+				}
+				else
+				{
+					signature = await Task.Run(() => AuthenticodeInspector.Inspect(item.LocalFile), operationCancellation!.Token);
+					item.SignatureSha256 = string.Empty;
+				}
 				ApplySignature(item, signature);
-				if (!string.IsNullOrWhiteSpace(inspection.SignatureSha256) && !signature.IsSigned)
+				if (!string.IsNullOrWhiteSpace(item.SignatureSha256) && !signature.IsSigned)
 					item.SignatureStatus = "MSIX/APPX package signature present";
+				if (signature.IsSigned || !string.IsNullOrWhiteSpace(item.SignatureSha256)) signedCount++; else if (signature.Status == "Unsigned") unsignedCount++;
 				report.AppendLine($"Installer {index + 1}: {Path.GetFileName(item.LocalFile)}")
 					.AppendLine($"  Status: {item.SignatureStatus}")
 					.AppendLine($"  Signer: {signature.SignerName.IfEmpty("Not available")}")
@@ -1479,8 +1566,9 @@ public partial class MainForm : Form
 			testOutputBox.Text = latestTestReport;
 			installerGrid.Refresh();
 			SelectTab("Test Center");
-			SetStatus("Digital signature inspection finished.");
+			SetStatus($"Digital signature inspection finished: {signedCount} signed, {unsignedCount} unsigned.");
 		}
+		catch (OperationCanceledException) { SetStatus("Digital signature inspection was cancelled."); }
 		catch (Exception ex) { ShowError("Signature inspection failed", ex); }
 		finally { SetBusy(false); }
 	}
@@ -1523,30 +1611,170 @@ public partial class MainForm : Form
 		SetStatus("Test report exported to " + path);
 	}
 
-	private void EnableLocalManifestTesting()
+	private async Task<bool> RefreshTestEnvironmentAsync(bool showReport)
 	{
-		if (uiTestMode) { SetStatus("TEST: Administrator settings were not opened."); return; }
-		if (WingetCommandService.IsLocalManifestFilesEnabled())
+		if (uiTestMode)
 		{
-			MessageBox.Show(this, "Winget local manifest testing is already enabled for this Windows account.", "Local testing ready", MessageBoxButtons.OK, MessageBoxIcon.Information);
-			return;
+			wingetHealth = new WingetHealthResult(true, "Safe UI test", 0, "Windows Package Manager check was simulated safely.");
+			UpdateTestPlanStatus();
+			if (showReport) SetStatus("TEST: Winget setup check completed without running an external command.");
+			return true;
 		}
-		DialogResult answer = MessageBox.Show(this,
-			"Windows requires a one-time administrator confirmation before Winget can install from local manifest files. This changes only Winget's LocalManifestFiles setting. Continue?",
-			"Enable local manifest testing", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-		if (answer != DialogResult.Yes) return;
+		if (!showReport && wingetHealth is not null && DateTimeOffset.Now - wingetHealthCheckedAt < TimeSpan.FromSeconds(30))
+		{
+			UpdateTestPlanStatus();
+			return wingetHealth.IsReady;
+		}
+		if (testEnvironmentCheckRunning)
+		{
+			while (testEnvironmentCheckRunning) await Task.Delay(100);
+			return wingetHealth?.IsReady == true;
+		}
+
+		testEnvironmentCheckRunning = true;
 		try
 		{
-			int processId = WingetCommandService.StartEnableLocalManifestFilesElevated();
-			testOutputBox.Text = $"An administrator console opened to enable Winget LocalManifestFiles.\r\nProcess ID: {processId}\r\n\r\nComplete that window, then return here and choose Test Install Here.";
+			SetStatus("Checking Windows Package Manager before testing...");
+			wingetHealth = await WingetCommandService.CheckWingetHealthAsync();
+			wingetHealthCheckedAt = DateTimeOffset.Now;
+			UpdateTestPlanStatus();
+			if (showReport)
+			{
+				testOutputBox.Text = "TEST SETUP CHECK\r\n\r\n"
+					+ $"Winget: {(wingetHealth.IsReady ? "READY" : "NOT READY")}\r\n"
+					+ (wingetHealth.Version.Length > 0 ? "Version: " + wingetHealth.Version + "\r\n" : string.Empty)
+					+ "Local manifest setting: " + (WingetCommandService.IsLocalManifestFilesEnabled() ? "ENABLED" : "NOT ENABLED") + "\r\n\r\n"
+					+ wingetHealth.Message
+					+ (wingetHealth.IsReady ? "\r\n\r\nNEXT: Run step 1, then follow the numbered buttons." : "\r\n\r\nNEXT: Open Windows Settings > Apps > Installed apps > App Installer > Advanced options, choose Repair, install Microsoft Store updates, and run Check Test Setup again.");
+				latestTestReport = testOutputBox.Text;
+				SelectTab("Test Center");
+			}
+			SetStatus(wingetHealth.IsReady ? "Winget is ready for manifest testing." : "Winget is not ready. The Test Center explains how to repair App Installer.");
+			return wingetHealth.IsReady;
+		}
+		finally
+		{
+			testEnvironmentCheckRunning = false;
+		}
+	}
+
+	private void UpdateTestPlanStatus()
+	{
+		if (testPlanLabel is null || testPlanLabel.IsDisposed || fields.Count == 0) return;
+		project.EnsureInstallerCollection();
+		List<string> errors = ManifestService.Validate(project);
+		string fingerprint = ProjectFingerprint();
+		bool projectReady = errors.Count == 0;
+		bool preflightReady = string.Equals(successfulPreflightFingerprint, fingerprint, StringComparison.Ordinal);
+		bool localTestingEnabled = WingetCommandService.IsLocalManifestFilesEnabled();
+		bool installPassed = string.Equals(successfulLocalInstallFingerprint, fingerprint, StringComparison.Ordinal);
+		bool installedVerified = string.Equals(verifiedInstalledFingerprint, fingerprint, StringComparison.Ordinal);
+		string wingetState = wingetHealth is null ? "NOT CHECKED" : wingetHealth.IsReady ? $"READY ({wingetHealth.Version})" : "NOT READY";
+		string next = !projectReady
+			? $"Fix the project first: {SimplifyReadinessError(errors[0])}."
+			: wingetHealth is { IsReady: false }
+				? "Choose Check Test Setup and follow the App Installer repair instructions."
+				: !preflightReady
+					? "Choose 1 Run Safe Preflight. This does not install anything."
+					: !localTestingEnabled
+						? "Choose 2 Enable Local Testing and approve the one-time Windows prompt."
+						: !installPassed
+							? "Choose 3 Test Install Here. Review the package, then confirm."
+							: !installedVerified
+								? "Choose 4 Verify Installed Result."
+								: "All required local tests passed. You can submit the current project.";
+
+		testPlanLabel.Text =
+			$"PROJECT DATA   {(projectReady ? "PASS" : $"NEEDS {errors.Count} FIX(ES)")}     •     WINGET   {wingetState}\r\n"
+			+ $"1  SAFE PREFLIGHT   {(preflightReady ? "PASS" : "NOT PASSED")}     •     2  LOCAL TESTING   {(localTestingEnabled ? "ENABLED" : "NOT ENABLED")}\r\n"
+			+ $"3  TEST INSTALL   {(installPassed ? "PASS" : "NOT PASSED")}     •     4  INSTALLED RESULT   {(installedVerified ? "VERIFIED" : "NOT VERIFIED")}\r\n"
+			+ "NEXT: " + next;
+		testPlanLabel.ForeColor = projectReady && wingetHealth is not { IsReady: false } ? Color.FromArgb(221, 233, 249) : StudioPalette.Warning;
+
+		if (safePreflightButton is not null) safePreflightButton.Enabled = !isBusy;
+		if (enableLocalTestingButton is not null)
+		{
+			enableLocalTestingButton.Text = localTestingEnabled ? "2 Local Testing Enabled" : "2 Enable Local Testing";
+			enableLocalTestingButton.AccessibleName = enableLocalTestingButton.Text;
+			enableLocalTestingButton.Enabled = !isBusy;
+		}
+		if (testInstallHereButton is not null)
+		{
+			testInstallHereButton.Text = localTestingEnabled ? "3 Test Install Here" : "3 Enable & Test Install";
+			testInstallHereButton.AccessibleName = testInstallHereButton.Text;
+			testInstallHereButton.Enabled = !isBusy;
+		}
+		if (verifyInstalledResultButton is not null) verifyInstalledResultButton.Enabled = !isBusy;
+	}
+
+	private async Task<bool> EnableLocalManifestTestingAsync(bool askForConfirmation = true)
+	{
+		if (uiTestMode)
+		{
+			SetStatus("TEST: Administrator settings were not opened.");
+			return true;
+		}
+		if (!await RefreshTestEnvironmentAsync(showReport: false))
+		{
+			testOutputBox.Text = "LOCAL TESTING CANNOT BE ENABLED YET\r\n\r\n" + (wingetHealth?.Message ?? "Windows Package Manager is not ready.")
+				+ "\r\n\r\nChoose Check Test Setup for repair instructions.";
 			SelectTab("Test Center");
-			SetStatus("Complete the administrator console to enable local manifest testing.");
+			return false;
+		}
+		if (WingetCommandService.IsLocalManifestFilesEnabled())
+		{
+			UpdateTestPlanStatus();
+			SetStatus("Local manifest testing is already enabled. Continue with step 3.");
+			return true;
+		}
+		if (askForConfirmation)
+		{
+			DialogResult answer = MessageBox.Show(this,
+				"Winget requires a one-time administrator confirmation to enable LocalManifestFiles for this Windows account. The Studio will wait for Winget, verify the result automatically, and close the setup window. Continue?",
+				"Step 2 — Enable local manifest testing", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+			if (answer != DialogResult.Yes) return false;
+		}
+
+		try
+		{
+			SetBusy(true, "Waiting for the one-time Winget administrator setting...");
+			ElevatedCommandSession session = WingetCommandService.StartEnableLocalManifestFilesElevated();
+			testOutputBox.Text = $"STEP 2 — ENABLING LOCAL TESTING\r\n\r\nApprove the Windows administrator prompt. Winget has up to 45 seconds to finish. The setup window closes automatically.\r\n\r\nProcess ID: {session.ProcessId}";
+			SelectTab("Test Center");
+			using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(operationCancellation!.Token);
+			timeout.CancelAfter(TimeSpan.FromSeconds(60));
+			CommandResult result = await WingetCommandService.WaitForElevatedCommandAsync(session, timeout.Token);
+			bool enabled = WingetCommandService.IsLocalManifestFilesEnabled();
+			testOutputBox.Text = "STEP 2 — LOCAL TESTING RESULT\r\n\r\n"
+				+ (enabled ? "PASS: Winget LocalManifestFiles is enabled for this Windows account." : "FAIL: Winget did not enable LocalManifestFiles for this Windows account.")
+				+ "\r\n\r\n" + result.CombinedOutput
+				+ (enabled ? "\r\n\r\nNEXT: Choose 3 Test Install Here." : "\r\n\r\nChoose Check Test Setup. If a different administrator account was used, sign in with the same Windows account that runs this Studio and try again.");
+			latestTestReport = testOutputBox.Text;
+			UpdateTestPlanStatus();
+			SetStatus(enabled ? "Local manifest testing is enabled. Continue with step 3." : "Local testing was not enabled. Review the exact result in Test Center.");
+			return enabled;
 		}
 		catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
 		{
 			SetStatus("Administrator confirmation was cancelled. No setting was changed.");
+			return false;
 		}
-		catch (Exception ex) { ShowError("Local manifest testing could not be enabled", ex); }
+		catch (OperationCanceledException)
+		{
+			testOutputBox.Text = "STEP 2 FAILED\r\n\r\nWinget did not finish the local-testing setting within one minute. Choose Check Test Setup for a specific Winget diagnosis.";
+			SetStatus("Winget did not finish enabling local testing.");
+			return false;
+		}
+		catch (Exception ex)
+		{
+			ShowError("Local manifest testing could not be enabled", ex);
+			return false;
+		}
+		finally
+		{
+			SetBusy(false);
+			UpdateTestPlanStatus();
+		}
 	}
 
 	private async Task TestInstallHereAsync()
@@ -1558,10 +1786,29 @@ public partial class MainForm : Form
 			return;
 		}
 		ReadProjectFromControls();
+		if (!await RefreshTestEnvironmentAsync(showReport: false))
+		{
+			testOutputBox.Text = "STEP 3 CANNOT START\r\n\r\n" + (wingetHealth?.Message ?? "Windows Package Manager is not ready.")
+				+ "\r\n\r\nNEXT: Choose Check Test Setup and follow the repair instructions.";
+			SelectTab("Test Center");
+			return;
+		}
+		string fingerprint = ProjectFingerprint();
+		if (!string.Equals(successfulPreflightFingerprint, fingerprint, StringComparison.Ordinal))
+		{
+			DialogResult runPreflight = MessageBox.Show(this,
+				"Step 1 Safe Preflight has not passed for the current project. Run it now before the installation test? Nothing is installed during Safe Preflight.",
+				"Complete step 1 first", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+			if (runPreflight != DialogResult.Yes || !await RunSafePreflightAsync()) return;
+			ReadProjectFromControls();
+			fingerprint = ProjectFingerprint();
+		}
 		if (!WingetCommandService.IsLocalManifestFilesEnabled())
 		{
-			MessageBox.Show(this, "Choose Enable Local Testing first and complete the one-time administrator console.", "Local manifest testing is disabled", MessageBoxButtons.OK, MessageBoxIcon.Information);
-			return;
+			DialogResult enable = MessageBox.Show(this,
+				"Step 2 Local Testing is not enabled yet. Enable it now, verify the result automatically, and then continue this installation test?",
+				"Complete step 2 now", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+			if (enable != DialogResult.Yes || !await EnableLocalManifestTestingAsync(askForConfirmation: false)) return;
 		}
 		DialogResult answer = MessageBox.Show(this,
 			$"This will run winget install --manifest for:\r\n\r\n{project.PackageIdentifier}  {project.PackageVersion}\r\nScope: {project.Scope}\r\n\r\nThe installer may change this computer and may request elevation. Continue?",
@@ -1573,10 +1820,11 @@ public partial class MainForm : Form
 			SetBusy(true, "Validating before the local installation test...");
 			cleanFolder = await CreateValidatedTestFolderAsync();
 			InteractiveCommandSession session = WingetCommandService.StartManifestInstallSession(cleanFolder);
+			string testedFingerprint = ProjectFingerprint();
 			testOutputBox.Text = $"LOCAL INSTALL TEST STARTED\r\n\r\nA persistent console is running winget install --manifest. Answer any installer or elevation prompts there.\r\nProcess ID: {session.ProcessId}";
 			SelectTab("Test Center");
 			SetStatus("Local install test opened in a persistent console.");
-			_ = MonitorTestSessionAsync(session, cleanFolder, "Local install test");
+			_ = MonitorTestSessionAsync(session, cleanFolder, "Local install test", testedFingerprint);
 			cleanFolder = null;
 		}
 		catch (Exception ex) { ShowError("The local installation test could not start", ex); }
@@ -1598,15 +1846,23 @@ public partial class MainForm : Form
 		try
 		{
 			ReadProjectFromControls();
+			if (!await RefreshTestEnvironmentAsync(showReport: false))
+			{
+				testOutputBox.Text = "STEP 4 CANNOT RUN\r\n\r\n" + (wingetHealth?.Message ?? "Windows Package Manager is not ready.");
+				SelectTab("Test Center");
+				return;
+			}
 			SetBusy(true, "Checking the installed package identity and version...");
 			CommandResult result = await WingetCommandService.ListInstalledPackageAsync(project.PackageIdentifier, operationCancellation!.Token);
 			string output = result.CombinedOutput;
 			bool identifierFound = output.Contains(project.PackageIdentifier, StringComparison.OrdinalIgnoreCase);
 			bool versionFound = output.Contains(project.PackageVersion, StringComparison.OrdinalIgnoreCase);
+			verifiedInstalledFingerprint = identifierFound && versionFound ? ProjectFingerprint() : string.Empty;
 			latestTestReport = $"INSTALLED RESULT VERIFICATION\r\n\r\n{(identifierFound ? "PASS" : "FAIL")}: Package identifier {(identifierFound ? "was found" : "was not found")}.\r\n{(versionFound ? "PASS" : "WARN")}: Expected version {project.PackageVersion} {(versionFound ? "was reported" : "was not visible in the result")}.\r\n\r\n{output}";
 			testOutputBox.Text = latestTestReport;
 			SelectTab("Test Center");
 			SetStatus(identifierFound && versionFound ? "Installed package and version match the project." : "The installed result needs review.");
+			UpdateTestPlanStatus();
 		}
 		catch (Exception ex) { ShowError("The installed package could not be verified", ex); }
 		finally { SetBusy(false); }
@@ -1618,6 +1874,12 @@ public partial class MainForm : Form
 		{
 			testOutputBox.Text = "SAFE UI TEST: Windows Sandbox and Microsoft's SandboxTest script were intentionally not launched.";
 			SetStatus("TEST: Sandbox test completed safely without opening a window.");
+			return;
+		}
+		if (!await RefreshTestEnvironmentAsync(showReport: false))
+		{
+			testOutputBox.Text = "SANDBOX TEST CANNOT START\r\n\r\n" + (wingetHealth?.Message ?? "Windows Package Manager is not ready.");
+			SelectTab("Test Center");
 			return;
 		}
 		if (!WingetCommandService.IsWindowsSandboxAvailable())
@@ -1640,7 +1902,7 @@ public partial class MainForm : Form
 			testOutputBox.Text = $"WINDOWS SANDBOX TEST STARTED\r\n\r\nMicrosoft's official SandboxTest.ps1 is preparing a disposable environment. The first run can take several minutes while it downloads the current Winget package and dependencies.\r\n\r\nOfficial source: {OfficialTestAssets.SandboxTestSource}\r\nProcess ID: {session.ProcessId}";
 			SelectTab("Test Center");
 			SetStatus("Microsoft's Sandbox test is running in a persistent console.");
-			_ = MonitorTestSessionAsync(session, cleanFolder, "Windows Sandbox test");
+			_ = MonitorTestSessionAsync(session, cleanFolder, "Windows Sandbox test", ProjectFingerprint());
 			cleanFolder = null;
 		}
 		catch (Exception ex) { ShowError("The Windows Sandbox test could not start", ex); }
@@ -1669,7 +1931,7 @@ public partial class MainForm : Form
 		}
 	}
 
-	private async Task MonitorTestSessionAsync(InteractiveCommandSession session, string cleanFolder, string title)
+	private async Task MonitorTestSessionAsync(InteractiveCommandSession session, string cleanFolder, string title, string testedFingerprint)
 	{
 		try
 		{
@@ -1678,9 +1940,12 @@ public partial class MainForm : Form
 			string output = File.Exists(session.LogPath) ? await File.ReadAllTextAsync(session.LogPath) : "The console did not produce a captured log.";
 			if (IsDisposed || Disposing) return;
 			latestTestReport = $"{title.ToUpperInvariant()} RESULT\r\n\r\nExit code: {process.ExitCode}\r\n\r\n{output}";
+			if (title.Equals("Local install test", StringComparison.OrdinalIgnoreCase))
+				successfulLocalInstallFingerprint = process.ExitCode == 0 ? testedFingerprint : string.Empty;
 			testOutputBox.Text = latestTestReport;
 			SelectTab("Test Center");
 			SetStatus(process.ExitCode == 0 ? $"{title} completed successfully. Review the captured result." : $"{title} exited with code {process.ExitCode}. Review the captured result.");
+			UpdateTestPlanStatus();
 		}
 		catch (Exception ex)
 		{
@@ -2062,6 +2327,28 @@ public partial class MainForm : Form
 		return panel;
 	}
 
+	private Control CreateTestPlanPanel()
+	{
+		StudioCard panel = new()
+		{
+			Dock = DockStyle.Top,
+			Height = 148,
+			BackColor = CardColor,
+			Padding = new Padding(18, 12, 18, 12),
+			Margin = new Padding(0, 0, 0, 8),
+			CornerRadius = 10
+		};
+		testPlanLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			ForeColor = Color.FromArgb(221, 233, 249),
+			Font = new Font("Segoe UI Semibold", 9.5F),
+			TextAlign = ContentAlignment.MiddleLeft
+		};
+		panel.Controls.Add(testPlanLabel);
+		return panel;
+	}
+
 	private void WireReadinessTracking()
 	{
 		foreach (Control control in fields.Values)
@@ -2159,6 +2446,7 @@ public partial class MainForm : Form
 		{
 			refreshingReadiness = false;
 		}
+		UpdateTestPlanStatus();
 	}
 
 	private void SetFieldError(string field, IEnumerable<string> errors, string prefix)
@@ -2289,34 +2577,116 @@ public partial class MainForm : Form
 
 	private Control Field(string key, string label, string hint = "", bool multiline = false, int width = 520)
 	{
-		Panel wrapper = new() { Width = width, Height = multiline ? 115 : 70, Margin = new Padding(8) };
-		Label caption = new() { Text = label, AutoSize = true, ForeColor = Color.FromArgb(189, 213, 244), Font = new Font("Segoe UI Semibold", 9F), Location = new Point(0, 0) };
+		bool required = RequiredProjectFields.Contains(key);
+		string guidance = FieldGuidance(key, hint, required);
+		Panel wrapper = new() { Width = width, Height = multiline ? 150 : 98, Margin = new Padding(8) };
+		Label caption = new() { Text = required ? label + "  * Required" : label, AutoSize = true, ForeColor = required ? Color.White : Color.FromArgb(189, 213, 244), Font = new Font("Segoe UI Semibold", 9F), Location = new Point(0, 0) };
 		StudioTextBox box = NewTextBox(width);
 		box.AccessibleName = label;
-		box.AccessibleDescription = hint;
+		box.AccessibleDescription = guidance;
 		box.Multiline = multiline;
 		box.Height = multiline ? 78 : 38;
 		box.Location = new Point(0, 24);
-		box.PlaceholderText = hint;
+		box.PlaceholderText = guidance;
+		Label help = new()
+		{
+			Text = guidance,
+			Location = new Point(1, multiline ? 106 : 65),
+			Width = width - 8,
+			Height = multiline ? 38 : 30,
+			AutoEllipsis = true,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 8.25F)
+		};
 		wrapper.Controls.Add(caption);
 		wrapper.Controls.Add(box);
+		wrapper.Controls.Add(help);
 		fields[key] = box;
 		return wrapper;
 	}
 
 	private Control ChoiceField(string key, string label, IEnumerable<string> choices, int width)
 	{
-		Panel wrapper = new() { Width = width, Height = 70, Margin = new Padding(8) };
-		Label caption = new() { Text = label, AutoSize = true, ForeColor = Color.FromArgb(189, 213, 244), Font = new Font("Segoe UI Semibold", 9F), Location = new Point(0, 0) };
+		bool required = RequiredProjectFields.Contains(key);
+		string guidance = FieldGuidance(key, string.Empty, required);
+		Panel wrapper = new() { Width = width, Height = 98, Margin = new Padding(8) };
+		Label caption = new() { Text = required ? label + " *" : label, AutoSize = true, ForeColor = required ? Color.White : Color.FromArgb(189, 213, 244), Font = new Font("Segoe UI Semibold", 9F), Location = new Point(0, 0) };
 		StudioComboBox box = NewComboBox(width);
 		box.AccessibleName = label;
-		box.AccessibleDescription = $"Choose {label.ToLowerInvariant()}";
+		box.AccessibleDescription = guidance;
 		box.Location = new Point(0, 24);
 		box.SetItems(choices);
+		Label help = new() { Text = guidance, Location = new Point(1, 65), Width = width - 4, Height = 30, AutoEllipsis = true, ForeColor = MutedColor, Font = new Font("Segoe UI", 8.25F) };
 		wrapper.Controls.Add(caption);
 		wrapper.Controls.Add(box);
+		wrapper.Controls.Add(help);
 		fields[key] = box;
 		return wrapper;
+	}
+
+	private static string FieldGuidance(string key, string suppliedHint, bool required)
+	{
+		string prefix = required ? "Required. " : "Optional. ";
+		if (!string.IsNullOrWhiteSpace(suppliedHint) && !suppliedHint.Equals("optional", StringComparison.OrdinalIgnoreCase))
+			return prefix + suppliedHint.Trim().TrimEnd('.') + ".";
+		string explanation = key switch
+		{
+			"PackageName" => "The public product name users see in Winget",
+			"Publisher" => "The company or person that publishes the application",
+			"Author" => "The original application author when different from the publisher",
+			"License" => "The license name, such as MIT, GPL-3.0, Proprietary, or Freeware",
+			"ShortDescription" => "One clear sentence explaining what the application does",
+			"Description" => "A longer public explanation of the application and its purpose",
+			"Moniker" => "A short command-friendly nickname used to find the package",
+			"Tags" => "Search words separated with commas; do not add # symbols",
+			"Commands" => "Command names installed by the package, separated with commas",
+			"PublisherUrl" => "Public HTTPS home page for the publisher",
+			"PublisherSupportUrl" => "Public HTTPS page where users can get help",
+			"PrivacyUrl" => "Public HTTPS privacy-policy page",
+			"PackageUrl" => "Public HTTPS home page for this application",
+			"LicenseUrl" => "Public HTTPS page containing the license terms",
+			"Copyright" => "Copyright notice shown with the package",
+			"CopyrightUrl" => "Public HTTPS page containing copyright information",
+			"PurchaseUrl" => "Public HTTPS purchase page when the application is paid",
+			"ReleaseNotesUrl" => "Public HTTPS page for this exact version's release notes",
+			"ReleaseNotes" => "What changed in this exact release",
+			"InstallationNotes" => "Instructions Winget shows after installation",
+			"Channel" => "Release channel such as stable, beta, or preview",
+			"InstallerLocale" => "Language built into the installer, such as en-US",
+			"Platform" => "Supported Winget platforms; normally Windows.Desktop",
+			"MinimumOSVersion" => "Lowest supported Windows version, such as 10.0.19041.0",
+			"InstallerType" => "Format or technology used by the installer",
+			"NestedInstallerType" => "Real installer type inside a ZIP package",
+			"Scope" => "Choose user for one account or machine for the whole computer",
+			"InstallModes" => "Supported modes separated with commas: interactive, silent, silentWithProgress",
+			"UpgradeBehavior" => "How upgrades behave; normally install",
+			"ElevationRequirement" => "Whether the installer requires elevation; leave blank when unknown",
+			"Protocols" => "URL protocols registered by the app, separated with commas",
+			"FileExtensions" => "File extensions registered by the app, separated with commas and without dots",
+			"UnsupportedOSArchitectures" => "Architectures that cannot use this installer, separated with commas",
+			"InstallerSuccessCodes" => "Extra successful installer exit codes, separated with commas",
+			"PackageFamilyName" => "Microsoft Store or MSIX package family name",
+			"ReleaseDate" => "Public release date in YYYY-MM-DD format",
+			"RepairBehavior" => "How Winget repairs the app: modify, uninstaller, or installer",
+			"InstallerAbortsTerminal" => "Enter true only if installation closes the user's terminal",
+			"InstallLocationRequired" => "Enter true only when a custom install location is mandatory",
+			"RequireExplicitUpgrade" => "Enter true when Winget must not upgrade automatically",
+			"DisplayInstallWarnings" => "Enter true when Winget should show installer warnings",
+			"DownloadCommandProhibited" => "Enter true when winget download must be blocked",
+			"ArchiveBinariesDependOnPath" => "For archives, enter true when extracted commands depend on PATH",
+			"SwitchSilent" => "Installer argument for a completely silent installation",
+			"SwitchSilentWithProgress" => "Installer argument for quiet installation with progress",
+			"SwitchInteractive" => "Installer argument that forces the interactive interface",
+			"SwitchInstallLocation" => "Installer argument template for a custom install folder",
+			"SwitchLog" => "Installer argument template for a log-file path",
+			"SwitchUpgrade" => "Installer argument used specifically during upgrades",
+			"CustomInstallerSwitch" => "Argument Winget must add to every install command",
+			"SwitchRepair" => "Installer argument used for repair",
+			"AdvancedLocaleFieldsYaml" => "Advanced locale YAML only; most users should leave this blank",
+			"AdvancedInstallerFieldsYaml" => "Advanced installer YAML only; most users should leave this blank",
+			_ => "Leave blank when this value does not apply or is unknown"
+		};
+		return prefix + explanation.TrimEnd('.') + ".";
 	}
 
 	private Control CreateSection(string title, string subtitle, params Control[] controls)
@@ -2545,6 +2915,9 @@ public partial class MainForm : Form
 		{
 			PerformLayout();
 			LayoutHeaderControls();
+			Record(workspaceInitialized && workspaceTabs.TabPages.Count == 7 && navigationButtons.Count == 7
+				&& workspaceTabs.TabPages.Cast<TabPage>().All(page => page.Controls.Count > 0),
+				"The complete workspace is constructed before the first visible paint");
 			Record(securityBadge.Right + 12 <= minimizeButton.Left, "Header badge and window buttons do not overlap",
 				$"badge right {securityBadge.Right}, minimize left {minimizeButton.Left}");
 			Record(closeButton.Left > minimizeButton.Right, "Minimize and Close buttons are aligned with a visible gap");
@@ -2571,6 +2944,10 @@ public partial class MainForm : Form
 				navigationButtons.TryGetValue("Test Center", out StudioNavButton? testCenterButton)
 					&& testCenterButton.Text.Contains("Test Center", StringComparison.Ordinal),
 				"Test Center is clearly named in the main navigation");
+			Record(testPlanLabel.Text.Contains("1  SAFE PREFLIGHT", StringComparison.Ordinal)
+				&& testPlanLabel.Text.Contains("2  LOCAL TESTING", StringComparison.Ordinal)
+				&& testPlanLabel.Text.Contains("NEXT:", StringComparison.Ordinal),
+				"Test Center shows the required order and one clear next action");
 
 			StudioTextBox[] textBoxes = Descendants(this).OfType<StudioTextBox>().Where(control => control.Enabled && !control.ReadOnly).ToArray();
 			foreach (StudioTextBox textBox in textBoxes)
@@ -2640,6 +3017,28 @@ public partial class MainForm : Form
 					&& Read("ShortDescription") == "Loaded from existing YAML"
 					&& installerGrid.Rows.Count == 1,
 				"Loaded YAML values populate every package field and installer row");
+
+			ManifestProject recoveredProject = new()
+			{
+				PackageIdentifier = "Contoso.Recovered",
+				PackageVersion = "4.3.2",
+				ManifestFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudioRecoveredUiTest"),
+				Publisher = "Contoso",
+				PackageName = "Recovered Package",
+				License = "MIT",
+				ShortDescription = "Recovered session"
+			};
+			recoveredProject.Installers.Add(new InstallerArtifact { InstallerUrl = "https://example.invalid/recovered.exe", Architecture = "x64", InstallerType = "exe", Sha256 = new string('D', 64) });
+			ApplyRecoveredProject(recoveredProject);
+			Record(Read("PackageIdentifier") == "Contoso.Recovered" && Read("PackageVersion") == "4.3.2" && installerGrid.Rows.Count == 1,
+				"Restore Last Session repopulates the form and installer grid");
+
+			ContextMenuStrip recentMenu = PrepareRecentProjectsMenu([Path.GetTempPath()]);
+			recentMenu.Show(navigationButtons["Start Here"], new Point(0, navigationButtons["Start Here"].Height + 2));
+			Application.DoEvents();
+			recentMenu.Close();
+			Application.DoEvents();
+			Record(!recentMenu.IsDisposed, "Closing Recent Projects does not dispose a menu still owned by WinForms");
 
 			project.Installers.Clear();
 			InstallerArtifact gridItem = new()
@@ -2742,6 +3141,7 @@ public partial class MainForm : Form
 			SelectTab("Start Here");
 			Record(fields.Values.All(control => control.Width > 0 && control.Height > 0), "All package fields have usable dimensions");
 			Record(fields.Values.All(control => !string.IsNullOrWhiteSpace(control.AccessibleName)), "Every package field has an accessible name");
+			Record(fields.Values.All(control => !string.IsNullOrWhiteSpace(control.AccessibleDescription)), "Every package field explains what to enter or when to leave it blank");
 			Record(actionButtons.All(button => !string.IsNullOrWhiteSpace(button.AccessibleName)), "Every action button has an accessible name");
 			Record(readinessLabel.Width > 0 && readinessLabel.Height > 0, "Project readiness guidance is visible");
 			Record(installerGrid.Columns.Count >= 9, "Installer grid contains the complete editing columns");

@@ -5,16 +5,29 @@ namespace ManifestUpdater;
 internal static class StudioStateStore
 {
 	private static readonly JsonSerializerOptions Options = new() { WriteIndented = true, PropertyNameCaseInsensitive = true };
-	private static string StateFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WingetManifestStudio");
+	internal static string? StateFolderOverride { get; set; }
+	private static string StateFolder => StateFolderOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WingetManifestStudio");
 	private static string StatePath => Path.Combine(StateFolder, "studio-state.json");
 	private static string RecoveryPath => Path.Combine(StateFolder, "recovery.wingetprofile.json");
 
 	public static void SaveRecovery(ManifestProject project)
 	{
+		// Opening and immediately closing the Studio must not replace a useful prior
+		// recovery file with the untouched blank startup project.
+		if (!HasRecoverableContent(project)) return;
 		Directory.CreateDirectory(StateFolder);
 		ProfileStore.Save(RecoveryPath, project);
 		if (!string.IsNullOrWhiteSpace(project.ManifestFolder)) AddRecentFolder(project.ManifestFolder);
 	}
+
+	internal static bool HasRecoverableContent(ManifestProject project) =>
+		!string.IsNullOrWhiteSpace(project.PackageIdentifier) ||
+		!string.IsNullOrWhiteSpace(project.PackageName) ||
+		!string.IsNullOrWhiteSpace(project.Publisher) ||
+		!string.IsNullOrWhiteSpace(project.ManifestFolder) ||
+		project.Installers.Any(installer =>
+			!string.IsNullOrWhiteSpace(installer.LocalFile) ||
+			!string.IsNullOrWhiteSpace(installer.InstallerUrl));
 
 	public static ManifestProject? LoadRecovery()
 	{
