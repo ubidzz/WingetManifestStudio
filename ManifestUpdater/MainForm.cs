@@ -45,6 +45,13 @@ public partial class MainForm : Form
 	{
 		this.uiTestMode = uiTestMode;
 		InitializeComponent();
+		if (uiTestMode)
+		{
+			ShowInTaskbar = false;
+			Opacity = 0.01;
+			StartPosition = FormStartPosition.Manual;
+			Location = new Point(-32000, -32000);
+		}
 		Icon = new System.ComponentModel.ComponentResourceManager(typeof(MainForm)).GetObject("$this.Icon") as Icon;
 		brandIcon.Image = Icon?.ToBitmap();
 		minimizeButton.Click += (_, _) => WindowState = FormWindowState.Minimized;
@@ -206,7 +213,7 @@ public partial class MainForm : Form
 
 	private void BuildWorkspace()
 	{
-		TabPage[] pages = [BuildStartTab(), BuildProjectTab(), BuildInstallersTab(), BuildPreviewTab(), BuildToolsTab()];
+		TabPage[] pages = [BuildStartTab(), BuildProjectTab(), BuildInstallersTab(), BuildPreviewTab(), BuildHelpTab(), BuildToolsTab()];
 		workspaceTabs.TabPages.AddRange(pages);
 		navigationPanel.Controls.Clear();
 		navigationPanel.ColumnStyles.Clear();
@@ -278,6 +285,8 @@ public partial class MainForm : Form
 			("Open Preview & Submit", (_, _) => SelectTab("Preview & Submit"))));
 		content.Controls.Add(CreateWorkflowCard("4", "Validate and submit", "Use the official validation and WingetCreate submission tools when the files are ready. GitHub tokens remain managed by Microsoft's tool and are never stored in a Studio profile.",
 			("Open Official Tools", (_, _) => SelectTab("Official Tool Commands"))));
+		content.Controls.Add(CreateWorkflowCard("?", "Need help?", "Open the built-in beginner guide for field meanings, installer IDs, hashes, validation, and submission.",
+			("Open Help & Guide", (_, _) => SelectTab("Help & Guide"))));
 		page.Controls.Add(content);
 		return page;
 	}
@@ -376,6 +385,27 @@ public partial class MainForm : Form
 		previewBox.Text = "Choose Preview to generate the manifests without changing any files.";
 		root.Controls.Add(previewBox, 0, 2);
 		page.Controls.Add(root);
+		return page;
+	}
+
+	private TabPage BuildHelpTab()
+	{
+		TabPage page = NewPage("Help & Guide");
+		FlowLayoutPanel content = NewScrollFlow();
+		content.Padding = new Padding(18, 20, 18, 30);
+		content.Controls.Add(CreateInfoStrip("BEGINNER GUIDE", "Follow these steps in order. Local installer files are read only to calculate hashes and identify installer details."));
+		content.Controls.Add(CreateWorkflowCard("1", "Choose update or new package", "Load the folder containing an existing package's YAML files, or create a new project and choose an empty output folder.",
+			("Load Existing Manifests", async (_, _) => await LoadManifestsAsync()),
+			("Create New Project", (_, _) => { NewProject(); SelectTab("Package Details"); })));
+		content.Controls.Add(CreateWorkflowCard("2", "Complete package details", "A package identifier usually uses Publisher.AppName. Enter the version without a leading v, then add the publisher, license, description, support link, and release notes.",
+			("Open Package Details", (_, _) => SelectTab("Package Details"))));
+		content.Controls.Add(CreateWorkflowCard("3", "Attach the installer", "Choose the exact local file you will upload, then enter its public HTTPS release URL. SHA-256 is automatic. MSI ProductCode and UpgradeCode are read automatically; normal EXE installers can leave those fields blank.",
+			("Open Installers & Hashes", (_, _) => SelectTab("Installers & Hashes"))));
+		content.Controls.Add(CreateWorkflowCard("4", "Preview and save safely", "Preview does not change any files. Save validates the YAML and creates timestamped backups before replacing existing manifests.",
+			("Open Preview & Submit", (_, _) => SelectTab("Preview & Submit"))));
+		content.Controls.Add(CreateWorkflowCard("5", "Validate and submit", "WingetCreate is optional until you are ready for Microsoft's official validation and submission. Its GitHub token stays in Windows Credential Manager.",
+			("Open Official Tools", (_, _) => SelectTab("Official Tool Commands"))));
+		page.Controls.Add(content);
 		return page;
 	}
 
@@ -1129,7 +1159,7 @@ public partial class MainForm : Form
 		StudioCard hero = new()
 		{
 			Width = 1160,
-			Height = 150,
+			Height = 190,
 			ColumnCount = 2,
 			BackColor = CardColor,
 			Padding = new Padding(24),
@@ -1137,11 +1167,13 @@ public partial class MainForm : Form
 		};
 		hero.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 72));
 		hero.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28));
-		Label title = new() { Text = "Build a Winget submission without editing YAML by hand.", Dock = DockStyle.Top, Height = 44, Font = new Font("Segoe UI Semibold", 20F, FontStyle.Bold), ForeColor = Color.White };
-		Label description = new() { Text = "Create a new three-file manifest set or safely update an existing one. Local release files provide the real SHA-256 hash; public URLs tell Winget where users will download them.", Dock = DockStyle.Fill, MaximumSize = new Size(780, 0), ForeColor = MutedColor, Font = new Font("Segoe UI", 10.5F) };
-		Panel copy = new() { Dock = DockStyle.Fill };
-		copy.Controls.Add(description);
-		copy.Controls.Add(title);
+		TableLayoutPanel copy = new() { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = CardColor };
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 74F));
+		copy.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+		Label title = new() { Text = "Build a Winget submission without editing YAML by hand.", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Margin = Padding.Empty, Font = new Font("Segoe UI Semibold", 20F, FontStyle.Bold), ForeColor = Color.White };
+		Label description = new() { Text = "Create a new three-file manifest set or safely update an existing one. Local release files provide the real SHA-256 hash; public URLs tell Winget where users will download them.", Dock = DockStyle.Fill, AutoSize = false, MaximumSize = new Size(780, 0), Margin = Padding.Empty, Padding = new Padding(0, 6, 12, 0), ForeColor = MutedColor, Font = new Font("Segoe UI", 10.5F) };
+		copy.Controls.Add(title, 0, 0);
+		copy.Controls.Add(description, 0, 1);
 		Label safety = new() { Text = "LOCAL-FIRST\n\nGitHub token stays in Windows Credential Manager\nNo manifest overwritten without backup\nNo installer downloaded automatically", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = SuccessColor, Font = new Font("Segoe UI Semibold", 9.5F), BackColor = InputColor, Padding = new Padding(18) };
 		hero.Controls.Add(copy, 0, 0);
 		hero.Controls.Add(safety, 1, 0);
@@ -1153,7 +1185,7 @@ public partial class MainForm : Form
 		StudioCard card = new()
 		{
 			Width = 1160,
-			Height = Math.Max(112, 36 + actions.Length * 52),
+			Height = Math.Max(136, 58 + actions.Length * 54),
 			ColumnCount = 3,
 			BackColor = CardColor,
 			Padding = new Padding(18),
@@ -1164,8 +1196,10 @@ public partial class MainForm : Form
 		card.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 		Label step = new() { Text = number, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI Semibold", 18F, FontStyle.Bold), ForeColor = AccentColor, BackColor = InputColor, Margin = new Padding(0, 0, 14, 0) };
 		TableLayoutPanel copy = new() { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = CardColor };
-		copy.Controls.Add(new Label { Text = title, Dock = DockStyle.Fill, Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold), ForeColor = Color.White }, 0, 0);
-		copy.Controls.Add(new Label { Text = description, Dock = DockStyle.Fill, ForeColor = MutedColor, MaximumSize = new Size(700, 0), AutoSize = true }, 0, 1);
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+		copy.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+		copy.Controls.Add(new Label { Text = title, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Margin = Padding.Empty, Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold), ForeColor = Color.White }, 0, 0);
+		copy.Controls.Add(new Label { Text = description, Dock = DockStyle.Fill, AutoSize = false, Margin = Padding.Empty, Padding = new Padding(0, 5, 14, 0), ForeColor = MutedColor, MaximumSize = new Size(700, 0) }, 0, 1);
 		FlowLayoutPanel buttons = new() { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = CardColor };
 		foreach ((string text, EventHandler handler) in actions) buttons.Controls.Add(CreateButton(text, handler, true));
 		card.Controls.Add(step, 0, 0);
