@@ -1,6 +1,7 @@
 # Winget Manifest Studio
 
 [![Build and test](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/quality.yml/badge.svg)](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/quality.yml)
+[![Repository checks](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/repository-checks.yml/badge.svg)](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/repository-checks.yml)
 [![CodeQL](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/codeql.yml/badge.svg)](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-20d4cb.svg)](LICENSE)
 
@@ -219,7 +220,7 @@ An optional live importer test verifies the public Winget repository and GitHub 
 
 ## Automated Repository Checks
 
-Every push and pull request to `master` runs a clean Windows build followed by the functional self-test, off-screen interface test, and startup probe. The interface suite checks multiple layouts from 1100×720 through 1920×1080 under the active Windows DPI setting. The functional corpus inspects real PE files, signed-or-unsigned results, MSI input when supplied, and ZIP packages containing real executables. The startup check rejects a first-window time above 15 seconds so major launch-time regressions cannot pass unnoticed. Test reports and off-screen screenshots are retained with each workflow run.
+Every push and pull request to `master` runs a clean Windows build followed by the functional self-test, off-screen interface test, and startup probe. The interface suite checks the minimum supported window size through 1920×1080 under the active Windows DPI setting. The functional corpus inspects real PE files, signed-or-unsigned results, MSI input when supplied, and ZIP packages containing real executables. The startup check rejects a first-window time above 15 seconds so major launch-time regressions cannot pass unnoticed. Test reports and off-screen screenshots are retained with each workflow run.
 
 Repository security automation also includes:
 
@@ -227,8 +228,10 @@ Repository security automation also includes:
 - NuGet auditing during every build, with known vulnerability warnings treated as errors.
 - Dependency Review on pull requests, rejecting newly introduced moderate-or-higher vulnerabilities.
 - Weekly Dependabot updates for NuGet packages and GitHub Actions.
+- Project-policy checks on pushes and pull requests, including required community files, tracked build-output detection, and enforcement of the `StudioSetup.msi` release name.
+- A framework-dependent publish smoke test on pushes and pull requests. It creates the EXE and MSI in an isolated CI folder, verifies their names and size limits, then runs the published functional and startup tests.
 
-These checks build the application only. They do not change or invoke the Visual Studio publish profiles and do not create an MSI during CI.
+The publish smoke test does not read or change any Visual Studio publish profile. Its isolated files are temporary GitHub Actions output and do not alter a developer's local publish settings.
 
 ## Publish
 

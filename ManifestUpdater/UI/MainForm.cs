@@ -3711,6 +3711,11 @@ public partial class MainForm : Form
 	private Control CreateInstallerDefaults()
 	{
 		FlowLayoutPanel row = CreateInlinePanel();
+		// Shared settings must remain reachable at the minimum supported window
+		// width. Let the fields form a second line instead of extending beyond the
+		// right edge of the page on smaller displays and CI virtual desktops.
+		row.WrapContents = true;
+		row.AutoSizeMode = AutoSizeMode.GrowAndShrink;
 		row.Padding = new Padding(14, 9, 14, 9);
 		row.Controls.Add(NewInlineLabel("Optional shared settings"));
 		row.Controls.Add(ChoiceField("InstallerType", "Shared installer type", ["exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "zip", "pwa", "portable", "font"], 145));
@@ -4408,7 +4413,12 @@ public partial class MainForm : Form
 			Record(insecureUrlCheck.Checked != originalHttpSetting, "HTTP URL toggle changes between off and on");
 			insecureUrlCheck.Checked = originalHttpSetting;
 			SelectTab("Installers & Hashes");
+			Size sizeBeforeSharedSettingsCheck = Size;
+			Size minimumSizeBeforeSharedSettingsCheck = MinimumSize;
+			MinimumSize = Size.Empty;
+			Size = new Size(1022, 718);
 			PerformLayout();
+			workspaceTabs.PerformLayout();
 			Application.DoEvents();
 			Control? toggleWrapper = insecureUrlCheck.Parent;
 			Control? toggleRow = toggleWrapper?.Parent;
@@ -4420,6 +4430,11 @@ public partial class MainForm : Form
 				.FirstOrDefault(label => label.Text == "Allow HTTP URLs");
 			Record(httpLabel is { AutoSize: true } && string.IsNullOrEmpty(insecureUrlCheck.Text) && insecureUrlCheck.Width <= 80,
 				"HTTP URL text is a separate label and only the small switch is clickable");
+			Size = sizeBeforeSharedSettingsCheck;
+			MinimumSize = minimumSizeBeforeSharedSettingsCheck;
+			PerformLayout();
+			workspaceTabs.PerformLayout();
+			Application.DoEvents();
 
 			ManifestProject importedProject = new()
 			{

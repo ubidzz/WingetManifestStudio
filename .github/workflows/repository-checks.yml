@@ -1,0 +1,160 @@
+name: Repository checks
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "41 9 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: repository-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  project-policy:
+    name: Project structure and safety policy
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check required repository files and release names
+        shell: pwsh
+        run: |
+          $requiredFiles = @(
+            "README.md",
+            "LICENSE",
+            "CODE_OF_CONDUCT.md",
+            "CONTRIBUTING.md",
+            "SECURITY.md",
+            ".github/CODEOWNERS",
+            ".github/dependabot.yml",
+            ".github/workflows/quality.yml",
+            ".github/workflows/codeql.yml",
+            ".github/workflows/dependency-review.yml",
+            "ManifestUpdater/WingetManifestStudio.csproj",
+            "ManifestUpdater/Packaging/MSI/Package.wxs"
+          )
+
+          $missingFiles = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+          if ($missingFiles.Count -gt 0) {
+            throw "Required repository files are missing: $($missingFiles -join ', ')"
+          }
+
+          $trackedFiles = @(git ls-files)
+          $trackedGeneratedFiles = @($trackedFiles | Where-Object {
+            $_ -match '(^|/)(bin|obj|\.vs)/' -or $_ -match '\.(user|suo|pfx|publishsettings)$'
+          })
+          if ($trackedGeneratedFiles.Count -gt 0) {
+            throw "Generated, user-specific, or secret-bearing files are tracked: $($trackedGeneratedFiles -join ', ')"
+          }
+
+          $legacySetupReferences = @(git grep -n -I -- "SynixStudioSetup.msi")
+          $grepExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($grepExitCode -notin @(0, 1)) {
+            throw "Git could not check the installer name."
+          }
+          if ($legacySetupReferences.Count -gt 0) {
+            throw "The obsolete SynixStudioSetup.msi name is still present: $($legacySetupReferences -join '; ')"
+          }
+
+          $projectText = Get-Content -Raw -LiteralPath "ManifestUpdater/WingetManifestStudio.csproj"
+          $wixText = Get-Content -Raw -LiteralPath "ManifestUpdater/Packaging/MSI/Package.wxs"
+          if (-not $projectText.Contains("StudioSetup.msi", [StringComparison]::Ordinal) -or
+              -not $wixText.Contains("Winget Manifest Studio", [StringComparison]::Ordinal)) {
+            throw "The publish project is not configured for StudioSetup.msi and Winget Manifest Studio."
+          }
+
+          Write-Host "Repository structure, tracked-file policy, and release names passed."
+
+  publish-smoke-test:
+    name: Publish EXE and MSI smoke test
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: |
+            ManifestUpdater/WingetManifestStudio.csproj
+            ManifestUpdater/Packaging/MSI/WingetManifestStudioInstaller.wixproj
+
+      - name: Publish the framework-dependent release
+        shell: pwsh
+        run: >-
+          dotnet publish ManifestUpdater/WingetManifestStudio.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained false
+          --output artifacts/ci-publish
+          -p:PublishSingleFile=true
+          -p:PublishReadyToRun=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+
+      - name: Verify release files and run the published app
+        shell: pwsh
+        run: |
+          $publishDirectory = Resolve-Path "artifacts/ci-publish"
+          $studioExe = Join-Path $publishDirectory "WingetManifestStudio.exe"
+          $studioMsi = Join-Path $publishDirectory "StudioSetup.msi"
+          $legacyMsi = Join-Path $publishDirectory "SynixStudioSetup.msi"
+
+          foreach ($requiredFile in @($studioExe, $studioMsi)) {
+            if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+              throw "Required published file is missing: $requiredFile"
+            }
+          }
+          if (Test-Path -LiteralPath $legacyMsi) {
+            throw "The obsolete SynixStudioSetup.msi file was published."
+          }
+
+          $exeSize = (Get-Item -LiteralPath $studioExe).Length
+          $msiSize = (Get-Item -LiteralPath $studioMsi).Length
+          if ($exeSize -gt 25MB -or $msiSize -gt 25MB) {
+            throw "The framework-dependent release is unexpectedly large. EXE: $exeSize bytes; MSI: $msiSize bytes."
+          }
+
+          $selfTest = Start-Process -FilePath $studioExe -ArgumentList "--self-test" -WindowStyle Hidden -Wait -PassThru
+          if ($selfTest.ExitCode -ne 0) {
+            throw "The published application self-test failed with exit code $($selfTest.ExitCode)."
+          }
+
+          $startupTest = Start-Process -FilePath $studioExe -ArgumentList "--startup-probe" -WindowStyle Hidden -Wait -PassThru
+          if ($startupTest.ExitCode -ne 0) {
+            throw "The published application startup probe failed with exit code $($startupTest.ExitCode)."
+          }
+          $startupMilliseconds = [int](Get-Content -Raw -LiteralPath (Join-Path $publishDirectory "startup-probe.txt"))
+          if ($startupMilliseconds -gt 15000) {
+            throw "Published first-window startup took $startupMilliseconds ms, exceeding the 15-second limit."
+          }
+
+          Write-Host "Published EXE: $exeSize bytes"
+          Write-Host "Published MSI: $msiSize bytes"
+          Write-Host "Published first-window startup: $startupMilliseconds ms"
+
+      - name: Upload publish evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: publish-smoke-test-evidence
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            artifacts/ci-publish/self-test-report.txt
+            artifacts/ci-publish/startup-probe.txt

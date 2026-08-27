@@ -48,28 +48,36 @@ jobs:
           --warnaserror
           -p:BuildStudioMsi=false
 
-      - name: Run functional, interface, and startup checks
+      - name: Run functional manifest tests
         shell: pwsh
         run: |
           $studioExe = Resolve-Path "ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe"
-
-          function Invoke-StudioCheck([string] $argument, [string] $displayName) {
-            $process = Start-Process `
-              -FilePath $studioExe `
-              -ArgumentList $argument `
-              -WindowStyle Hidden `
-              -Wait `
-              -PassThru
-
-            if ($process.ExitCode -ne 0) {
-              throw "$displayName failed with exit code $($process.ExitCode)."
-            }
+          $process = Start-Process -FilePath $studioExe -ArgumentList "--self-test" -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            $report = "ManifestUpdater/bin/Release/net10.0-windows/self-test-report.txt"
+            if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report }
+            throw "Functional self-test failed with exit code $($process.ExitCode)."
           }
 
-          Invoke-StudioCheck "--self-test" "Functional self-test"
-          Invoke-StudioCheck "--ui-self-test" "Off-screen interface self-test"
-          Invoke-StudioCheck "--startup-probe" "Startup probe"
+      - name: Run off-screen interface tests
+        shell: pwsh
+        run: |
+          $studioExe = Resolve-Path "ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe"
+          $process = Start-Process -FilePath $studioExe -ArgumentList "--ui-self-test" -WindowStyle Hidden -Wait -PassThru
+          $report = "ManifestUpdater/bin/Release/net10.0-windows/ui-self-test-report.txt"
+          if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report }
+          if ($process.ExitCode -ne 0) {
+            throw "Off-screen interface self-test failed with exit code $($process.ExitCode)."
+          }
 
+      - name: Run startup regression probe
+        shell: pwsh
+        run: |
+          $studioExe = Resolve-Path "ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe"
+          $process = Start-Process -FilePath $studioExe -ArgumentList "--startup-probe" -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Startup probe failed with exit code $($process.ExitCode)."
+          }
           $startupFile = "ManifestUpdater/bin/Release/net10.0-windows/startup-probe.txt"
           if (-not (Test-Path -LiteralPath $startupFile)) {
             throw "The startup probe did not create its timing result."
