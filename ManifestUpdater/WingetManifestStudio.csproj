@@ -13,7 +13,7 @@
     <Title>Winget Manifest Studio</Title>
     <Description>Create, update, inspect, validate, and submit Windows Package Manager manifests.</Description>
     <Company>ubidzz</Company>
-    <Version>1.1.0</Version>
+    <Version>1.0.0</Version>
     <FileVersion>$(Version).0</FileVersion>
     <AssemblyVersion>$(Version).0</AssemblyVersion>
     <InformationalVersion>$(Version)</InformationalVersion>
@@ -37,9 +37,7 @@
     </EmbeddedResource>
   </ItemGroup>
 
-  <Target Name="BuildMsiAfterPublish"
-          AfterTargets="Publish"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(PublishProtocol)' != 'ClickOnce' and '$(BuildStudioMsi)' != 'false'">
+  <Target Name="BuildMsiAfterPublish" AfterTargets="Publish" Condition="'$(DesignTimeBuild)' != 'true' and '$(PublishProtocol)' != 'ClickOnce' and '$(BuildStudioMsi)' != 'false'">
     <PropertyGroup>
       <_StudioPublishDirectory>$([System.IO.Path]::GetFullPath('$(PublishDir)'))</_StudioPublishDirectory>
       <_StudioPublishPathMarker>$([System.IO.Path]::Combine('$(_StudioPublishDirectory)', '_'))</_StudioPublishPathMarker>
@@ -68,37 +66,27 @@
 
     <Message Condition="'$(_StudioSigningEnabled)' != 'true'" Text="Winget Manifest Studio will be published unsigned. Set the WMS_SIGNING_CERTIFICATE_THUMBPRINT environment variable to a code-signing certificate with a private key to sign the EXE and MSI." Importance="high" />
     <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing WingetManifestStudio.exe with certificate $(StudioSigningCertificateThumbprint)..." Importance="high" />
-    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
-      Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioPublishedExe)&quot;" />
-    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
-      Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioPublishedExe)&quot;" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioPublishedExe)&quot;" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioPublishedExe)&quot;" />
 
     <Message Text="Preparing the small framework-dependent MSI payload. The installed app requires the Microsoft .NET 10 Desktop Runtime (x64)." Importance="high" />
     <RemoveDir Directories="$(_StudioMsiPayloadDirectory)" Condition="Exists('$(_StudioMsiPayloadDirectory)')" />
     <RemoveDir Directories="$(_StudioMsiIntermediateDirectory)" Condition="Exists('$(_StudioMsiIntermediateDirectory)')" />
     <RemoveDir Directories="$(_StudioMsiBuildOutputDirectory)" Condition="Exists('$(_StudioMsiBuildOutputDirectory)')" />
-    <Exec
-      Command="&quot;$(_StudioDotNetHost)&quot; publish &quot;$(MSBuildProjectFullPath)&quot; --configuration Release --runtime win-x64 --self-contained false --nologo &quot;-p:BuildStudioMsi=false&quot; &quot;-p:IntermediateOutputPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:MSBuildProjectExtensionsPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:OutputPath=$(_StudioMsiBuildOutputDirectory)/&quot; &quot;-p:PublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:PublishSingleFile=true&quot; &quot;-p:PublishReadyToRun=true&quot; &quot;-p:DebugType=None&quot; &quot;-p:DebugSymbols=false&quot;"
-      WorkingDirectory="$(MSBuildProjectDirectory)" />
+    <Exec Command="&quot;$(_StudioDotNetHost)&quot; publish &quot;$(MSBuildProjectFullPath)&quot; --configuration Release --runtime win-x64 --self-contained false --nologo &quot;-p:BuildStudioMsi=false&quot; &quot;-p:IntermediateOutputPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:MSBuildProjectExtensionsPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:OutputPath=$(_StudioMsiBuildOutputDirectory)/&quot; &quot;-p:PublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:PublishSingleFile=true&quot; &quot;-p:PublishReadyToRun=true&quot; &quot;-p:DebugType=None&quot; &quot;-p:DebugSymbols=false&quot;" WorkingDirectory="$(MSBuildProjectDirectory)" />
     <Error Condition="!Exists('$(_StudioMsiPayloadExe)')" Text="The framework-dependent Winget Manifest Studio MSI payload was not created at $(_StudioMsiPayloadExe)." />
     <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing the framework-dependent MSI application payload..." Importance="high" />
-    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
-      Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioMsiPayloadExe)&quot;" />
-    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
-      Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioMsiPayloadExe)&quot;" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioMsiPayloadExe)&quot;" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioMsiPayloadExe)&quot;" />
 
     <Message Text="Building StudioSetup.msi with Version $(Version) from the isolated MSI payload..." Importance="high" />
     <Delete Files="$(_StudioMsiBuildOutput)" Condition="Exists('$(_StudioMsiBuildOutput)')" />
-    <Exec
-      Command="&quot;$(_StudioDotNetHost)&quot; build &quot;$(_StudioMsiProject)&quot; --configuration Release --no-incremental --nologo &quot;-p:Version=$(Version)&quot; &quot;-p:StudioPublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:StudioProjectDir=$(MSBuildProjectDirectory)&quot; &quot;-p:StudioAssemblyName=$(AssemblyName)&quot;"
-      WorkingDirectory="$(MSBuildProjectDirectory)" />
+    <Exec Command="&quot;$(_StudioDotNetHost)&quot; build &quot;$(_StudioMsiProject)&quot; --configuration Release --no-incremental --nologo &quot;-p:Version=$(Version)&quot; &quot;-p:StudioPublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:StudioProjectDir=$(MSBuildProjectDirectory)&quot; &quot;-p:StudioAssemblyName=$(AssemblyName)&quot;" WorkingDirectory="$(MSBuildProjectDirectory)" />
 
     <Error Condition="!Exists('$(_StudioMsiBuildOutput)')" Text="WiX did not create $(_StudioMsiBuildOutput)." />
     <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing StudioSetup.msi..." Importance="high" />
-    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
-      Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioMsiBuildOutput)&quot;" />
-    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
-      Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioMsiBuildOutput)&quot;" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioMsiBuildOutput)&quot;" />
+    <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioMsiBuildOutput)&quot;" />
     <Delete Files="$(_StudioMsiOutput)" Condition="Exists('$(_StudioMsiOutput)')" />
     <Copy SourceFiles="$(_StudioMsiBuildOutput)" DestinationFiles="$(_StudioMsiOutput)" />
     <Error Condition="!Exists('$(_StudioMsiOutput)')" Text="The MSI was not copied to $(_StudioMsiOutput)." />
