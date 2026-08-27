@@ -43,6 +43,7 @@ public partial class MainForm : Form
 	private Button enableLocalTestingButton = null!;
 	private Button testInstallHereButton = null!;
 	private Button verifyInstalledResultButton = null!;
+	private Button testSubmitButton = null!;
 	private Button submitButton = null!;
 	private Button previewModeButton = null!;
 	private Button toolRunButton = null!;
@@ -593,11 +594,12 @@ public partial class MainForm : Form
 			("Open Validation", (_, _) => SelectTab("Preview & Submit"))));
 		content.Controls.Add(CreateWorkflowCard("10", "Run test step 1 — Safe Preflight", "The Test Center first checks whether Winget itself works, then rechecks attached file hashes and signatures, runs official validation, and searches Winget plus microsoft/winget-pkgs for the exact package identifier. It does not install anything.",
 			("Open Test Center", (_, _) => SelectTab("Test Center"))));
-		content.Controls.Add(CreateWorkflowCard("11", "Run test steps 2, 3, and 4", "Enable Local Testing requests the one-time Windows administrator approval and the Studio verifies the result automatically. Test Install Here validates again before running winget install --manifest. Verify Installed Result checks the exact package identifier and version.",
+		content.Controls.Add(CreateWorkflowCard("11", "Run test steps 2, 3, and 4", "Enable Local Testing requests one Windows administrator approval. Test Install Here validates again before running winget install --manifest. Verify Installation checks the Winget ID, then falls back to the exact MSI ProductCode or installed application name when Winget does not retain the local manifest ID.",
 			("Open Installation Tests", (_, _) => SelectTab("Test Center"))));
 		content.Controls.Add(CreateWorkflowCard("12", "Use Windows Sandbox when available", "Test in Windows Sandbox downloads Microsoft's official SandboxTest.ps1 and installs the generated manifests inside a disposable environment. The first run can take several minutes while Microsoft dependencies are prepared.",
 			("Open Sandbox Test", (_, _) => SelectTab("Test Center"))));
-		content.Controls.Add(CreateWorkflowCard("13", "Submit with Microsoft's WingetCreate", "Install WingetCreate from Official Tool Commands if needed. Submit opens a separate console for sign-in and creates the pull request. The GitHub token is handled by WingetCreate and Windows Credential Manager; it is never saved in a Studio profile.",
+		content.Controls.Add(CreateWorkflowCard("13", "Submit directly from Test Center", "After all four required tests pass, choose Submit to Winget at the bottom of the Test Center steps. It opens Microsoft's WingetCreate workflow for sign-in and pull-request creation. The GitHub token stays in Windows Credential Manager.",
+			("Open Test Center", (_, _) => SelectTab("Test Center")),
 			("Open Official Tools", (_, _) => SelectTab("Official Tool Commands"))));
 		content.Controls.Add(CreateInfoStrip("COMMON PROBLEMS", "Do not use a leading v in the version, a release web-page URL instead of the direct asset URL, a hash from a different file, or the wrong architecture. Reattach and inspect the exact published file whenever it changes."));
 		page.Controls.Add(content);
@@ -608,43 +610,75 @@ public partial class MainForm : Form
 	{
 		TabPage page = NewPage("Test Center");
 		TableLayoutPanel root = NewRoot();
-		root.RowCount = 6;
-		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+		root.RowCount = 2;
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-		root.Controls.Add(CreateInfoStrip("FOLLOW THESE TESTS IN ORDER", "The status panel tells you exactly what is ready and what to do next. Test Install Here automatically checks Winget, runs Safe Preflight when needed, and offers to enable local manifests."), 0, 0);
-		root.Controls.Add(CreateTestPlanPanel(), 0, 1);
-		TableLayoutPanel requiredTests = (TableLayoutPanel)CreateToolbar(
-			("1 Run Safe Preflight", async (_, _) => await RunSafePreflightAsync()),
-			("2 Enable Local Testing", async (_, _) => await EnableLocalManifestTestingAsync()),
-			("3 Test Install Here", async (_, _) => await TestInstallHereAsync()),
-			("4 Verify Installed Result", async (_, _) => await VerifyInstalledResultAsync()));
-		safePreflightButton = requiredTests.Controls.OfType<Button>().First(button => button.Text.StartsWith("1 ", StringComparison.Ordinal));
-		enableLocalTestingButton = requiredTests.Controls.OfType<Button>().First(button => button.Text.StartsWith("2 ", StringComparison.Ordinal));
-		testInstallHereButton = requiredTests.Controls.OfType<Button>().First(button => button.Text.StartsWith("3 ", StringComparison.Ordinal));
-		verifyInstalledResultButton = requiredTests.Controls.OfType<Button>().First(button => button.Text.StartsWith("4 ", StringComparison.Ordinal));
-		root.Controls.Add(requiredTests, 0, 2);
-		root.Controls.Add(CreateInfoStrip("EXTRA CHECKS", "Check Test Setup diagnoses Winget before opening any console. Signature, repository, Sandbox, and report tools are useful checks, but the numbered buttons above are the required local-install order."), 0, 3);
-		root.Controls.Add(CreateToolbar(
-			("Check Test Setup", async (_, _) => await RefreshTestEnvironmentAsync(showReport: true)),
-			("Inspect Signatures", async (_, _) => await InspectSignaturesAsync()),
-			("Find Existing Package", async (_, _) => await FindExistingPackageAsync()),
-			("Optional: Test in Sandbox", async (_, _) => await TestInSandboxAsync()),
-			("Export Test Report", async (_, _) => await ExportTestReportAsync())), 0, 4);
-		testOutputBox = NewRichTextBox();
-		testOutputBox.ReadOnly = true;
-		testOutputBox.DetectUrls = true;
-		testOutputBox.Font = new Font("Cascadia Mono", 9F);
-		testOutputBox.Text = "Start with 1 Run Safe Preflight. It checks the manifest without installing anything. Then follow steps 2, 3, and 4 in order.";
-		testOutputBox.LinkClicked += (_, eventArgs) =>
+		root.Controls.Add(CreateInfoStrip("TEST AND FINISH", "Work down the four required steps on the left. The highlighted button is the next action. Results and optional diagnostic tools stay on the right. When all four steps pass, submit here without returning to Review."), 0, 0);
+
+		TableLayoutPanel body = new()
 		{
-			if (!uiTestMode && Uri.TryCreate(eventArgs.LinkText, UriKind.Absolute, out Uri? uri))
-				Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
+			AccessibleName = "Test Center split workspace",
+			Dock = DockStyle.Fill,
+			ColumnCount = 2,
+			RowCount = 1,
+			BackColor = PageColor,
+			Padding = new Padding(0, 4, 0, 0),
+			Margin = Padding.Empty
 		};
-		root.Controls.Add(testOutputBox, 0, 5);
+		body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+		body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+
+		FlowLayoutPanel steps = new()
+		{
+			AccessibleName = "Required test steps",
+			Dock = DockStyle.Fill,
+			AutoScroll = true,
+			FlowDirection = FlowDirection.TopDown,
+			WrapContents = false,
+			BackColor = PageColor,
+			Padding = new Padding(0, 0, 10, 10),
+			Margin = Padding.Empty
+		};
+		bool resizingSteps = false;
+		steps.ClientSizeChanged += (_, _) =>
+		{
+			if (resizingSteps || steps.IsDisposed) return;
+			resizingSteps = true;
+			try
+			{
+				int width = Math.Max(510, steps.ClientSize.Width - steps.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 4);
+				foreach (Control control in steps.Controls) control.Width = width;
+			}
+			finally { resizingSteps = false; }
+		};
+		steps.Controls.Add(CreateTestPlanPanel());
+		steps.Controls.Add(CreateTestStepCard("1", "Safe preflight", "Checks YAML, hashes, signatures, and the existing Winget package. It does not install anything.", "Run safe preflight", async (_, _) => await RunSafePreflightAsync(), out safePreflightButton));
+		steps.Controls.Add(CreateTestStepCard("2", "Allow local manifest testing", "One Windows administrator approval. This setting normally only needs to be enabled once.", "Enable local testing", async (_, _) => await EnableLocalManifestTestingAsync(), out enableLocalTestingButton));
+		steps.Controls.Add(CreateTestStepCard("3", "Install this release", "Runs the exact generated manifest through Winget. Review the separate installer console, then close it.", "Test install here", async (_, _) => await TestInstallHereAsync(), out testInstallHereButton));
+		steps.Controls.Add(CreateTestStepCard("4", "Confirm the installed result", "Checks the Winget ID first, then the exact MSI identity or installed application name when needed.", "Verify installation", async (_, _) => await VerifyInstalledResultAsync(), out verifyInstalledResultButton));
+		steps.Controls.Add(CreateTestStepCard("✓", "Finish and submit", "After all four required checks pass, start Microsoft's official WingetCreate submission here.", "Submit to Winget", async (_, _) => await SubmitAsync(), out testSubmitButton));
+
+		TableLayoutPanel details = new()
+		{
+			AccessibleName = "Test results and optional tools",
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 3,
+			BackColor = PageColor,
+			Padding = new Padding(10, 0, 0, 0),
+			Margin = Padding.Empty
+		};
+		details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+		details.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		details.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+		details.RowStyles.Add(new RowStyle(SizeType.Absolute, 174));
+		details.Controls.Add(CreateTestResultsPanel(), 0, 0);
+		details.Controls.Add(CreateInfoStrip("OPTIONAL TOOLS", "Use these only when you need more detail. They are not extra required steps."), 0, 1);
+		details.Controls.Add(CreateTestToolsPanel(), 0, 2);
+
+		body.Controls.Add(steps, 0, 0);
+		body.Controls.Add(details, 1, 0);
+		root.Controls.Add(body, 0, 1);
 		page.Controls.Add(root);
 		UpdateTestPlanStatus();
 		return page;
@@ -1601,40 +1635,69 @@ public partial class MainForm : Form
 		bool installedVerified = string.Equals(verifiedInstalledFingerprint, fingerprint, StringComparison.Ordinal);
 		string wingetState = wingetHealth is null ? "NOT CHECKED" : wingetHealth.IsReady ? $"READY ({wingetHealth.Version})" : "NOT READY";
 		string next = !projectReady
-			? $"Fix the project first: {SimplifyReadinessError(errors[0])}."
+			? $"Return to Package or Installers: {SimplifyReadinessError(errors[0])}."
 			: wingetHealth is { IsReady: false }
-				? "Choose Check Test Setup and follow the App Installer repair instructions."
+				? "Use Check Winget setup on the right and follow its repair instructions."
 				: !preflightReady
-					? "Choose 1 Run Safe Preflight. This does not install anything."
+					? "Run Safe preflight. It does not install anything."
 					: !localTestingEnabled
-						? "Choose 2 Enable Local Testing and approve the one-time Windows prompt."
+						? "Enable local testing and approve the one Windows prompt."
 						: !installPassed
-							? "Choose 3 Test Install Here. Review the package, then confirm."
+							? "Run Test install here and complete its installer console."
 							: !installedVerified
-								? "Choose 4 Verify Installed Result."
-								: "All required local tests passed. You can submit the current project.";
+								? "Verify installation. The Studio checks Winget and the installer identity."
+								: "All four tests passed. Submit to Winget below without leaving this page.";
 
 		testPlanLabel.Text =
-			$"PROJECT DATA   {(projectReady ? "PASS" : $"NEEDS {errors.Count} FIX(ES)")}     •     WINGET   {wingetState}\r\n"
-			+ $"1  SAFE PREFLIGHT   {(preflightReady ? "PASS" : "NOT PASSED")}     •     2  LOCAL TESTING   {(localTestingEnabled ? "ENABLED" : "NOT ENABLED")}\r\n"
-			+ $"3  TEST INSTALL   {(installPassed ? "PASS" : "NOT PASSED")}     •     4  INSTALLED RESULT   {(installedVerified ? "VERIFIED" : "NOT VERIFIED")}\r\n"
-			+ "NEXT: " + next;
+			$"Project: {(projectReady ? "Ready" : $"Needs {errors.Count} fix(es)")}     •     Winget: {wingetState}\r\n"
+			+ $"1  Preflight: {(preflightReady ? "Passed" : "Not run")}        2  Local testing: {(localTestingEnabled ? "Enabled" : "Not enabled")}\r\n"
+			+ $"3  Test install: {(installPassed ? "Passed" : "Not run")}        4  Installed result: {(installedVerified ? "Verified" : "Not verified")}\r\n"
+			+ "Next: " + next;
 		testPlanLabel.ForeColor = projectReady && wingetHealth is not { IsReady: false } ? Color.FromArgb(221, 233, 249) : StudioPalette.Warning;
 
-		if (safePreflightButton is not null) safePreflightButton.Enabled = !isBusy;
+		bool wingetReady = wingetHealth is not { IsReady: false };
+		bool allRequiredTestsPassed = projectReady && preflightReady && localTestingEnabled && installPassed && installedVerified;
+		Button? nextButton = !projectReady || !wingetReady ? null
+			: !preflightReady ? safePreflightButton
+			: !localTestingEnabled ? enableLocalTestingButton
+			: !installPassed ? testInstallHereButton
+			: !installedVerified ? verifyInstalledResultButton
+			: testSubmitButton;
+
+		if (safePreflightButton is not null)
+		{
+			safePreflightButton.Text = preflightReady ? "Preflight passed  ✓" : "Run safe preflight";
+			safePreflightButton.AccessibleName = safePreflightButton.Text;
+			safePreflightButton.Enabled = !isBusy && projectReady;
+		}
 		if (enableLocalTestingButton is not null)
 		{
-			enableLocalTestingButton.Text = localTestingEnabled ? "2 Local Testing Enabled" : "2 Enable Local Testing";
+			enableLocalTestingButton.Text = localTestingEnabled ? "Local testing enabled  ✓" : "Enable local testing";
 			enableLocalTestingButton.AccessibleName = enableLocalTestingButton.Text;
-			enableLocalTestingButton.Enabled = !isBusy;
+			enableLocalTestingButton.Enabled = !isBusy && projectReady && preflightReady;
 		}
 		if (testInstallHereButton is not null)
 		{
-			testInstallHereButton.Text = localTestingEnabled ? "3 Test Install Here" : "3 Enable & Test Install";
+			testInstallHereButton.Text = installPassed ? "Test install passed  ✓" : "Test install here";
 			testInstallHereButton.AccessibleName = testInstallHereButton.Text;
-			testInstallHereButton.Enabled = !isBusy;
+			testInstallHereButton.Enabled = !isBusy && projectReady && preflightReady && localTestingEnabled;
 		}
-		if (verifyInstalledResultButton is not null) verifyInstalledResultButton.Enabled = !isBusy;
+		if (verifyInstalledResultButton is not null)
+		{
+			verifyInstalledResultButton.Text = installedVerified ? "Installation verified  ✓" : "Verify installation";
+			verifyInstalledResultButton.AccessibleName = verifyInstalledResultButton.Text;
+			verifyInstalledResultButton.Enabled = !isBusy && projectReady && installPassed;
+		}
+		if (testSubmitButton is not null)
+		{
+			testSubmitButton.Enabled = !isBusy && allRequiredTestsPassed;
+			testSubmitButton.AccessibleName = "Submit to Winget from Test Center";
+		}
+		foreach (Button button in new Button?[] { safePreflightButton, enableLocalTestingButton, testInstallHereButton, verifyInstalledResultButton, testSubmitButton }.OfType<Button>())
+		{
+			if (button is StudioButton studioButton)
+				studioButton.ButtonKind = ReferenceEquals(button, nextButton) ? StudioButtonKind.Primary : StudioButtonKind.Secondary;
+		}
 	}
 
 	private async Task<bool> EnableLocalManifestTestingAsync(bool askForConfirmation = true)
@@ -1789,16 +1852,23 @@ public partial class MainForm : Form
 				SelectTab("Test Center");
 				return;
 			}
-			SetBusy(true, "Checking the installed package identity and version...");
-			CommandResult result = await WingetCommandService.ListInstalledPackageAsync(project.PackageIdentifier, operationCancellation!.Token);
-			string output = result.CombinedOutput;
-			bool identifierFound = output.Contains(project.PackageIdentifier, StringComparison.OrdinalIgnoreCase);
-			bool versionFound = output.Contains(project.PackageVersion, StringComparison.OrdinalIgnoreCase);
-			verifiedInstalledFingerprint = identifierFound && versionFound ? ProjectFingerprint() : string.Empty;
-			latestTestReport = $"INSTALLED RESULT VERIFICATION\r\n\r\n{(identifierFound ? "PASS" : "FAIL")}: Package identifier {(identifierFound ? "was found" : "was not found")}.\r\n{(versionFound ? "PASS" : "WARN")}: Expected version {project.PackageVersion} {(versionFound ? "was reported" : "was not visible in the result")}.\r\n\r\n{output}";
+			SetBusy(true, "Checking Winget and the installer's Windows identity...");
+			InstalledPackageVerification result = await InstalledPackageVerifier.VerifyAsync(project, operationCancellation!.Token);
+			bool verified = result.Found && result.VersionMatches;
+			verifiedInstalledFingerprint = verified ? ProjectFingerprint() : string.Empty;
+			latestTestReport = "STEP 4 — INSTALLED RESULT\r\n\r\n"
+				+ (result.Found ? "PASS: The installed application was found." : "FAIL: The installed application was not found.") + "\r\n"
+				+ (result.VersionMatches
+					? $"PASS: Installed version matches {project.PackageVersion}."
+					: $"FAIL: Installed version {result.InstalledVersion.IfEmpty("was not reported")} does not match {project.PackageVersion}.") + "\r\n"
+				+ $"Matched by: {result.Method}\r\n"
+				+ (result.InstalledName.Length > 0 ? "Installed name: " + result.InstalledName + "\r\n" : string.Empty)
+				+ (result.InstalledVersion.Length > 0 ? "Installed version: " + result.InstalledVersion + "\r\n" : string.Empty)
+				+ "\r\n" + result.Diagnostic
+				+ (verified ? "\r\n\r\nALL FOUR TESTS PASSED. Choose Submit to Winget on this page." : "\r\n\r\nReview the installed name and version above, then correct the manifest or installer before submitting.");
 			testOutputBox.Text = latestTestReport;
 			SelectTab("Test Center");
-			SetStatus(identifierFound && versionFound ? "Installed package and version match the project." : "The installed result needs review.");
+			SetStatus(verified ? "All required tests passed. Submit to Winget directly from Test Center." : "The installed result needs review.");
 			UpdateTestPlanStatus();
 		}
 		catch (Exception ex) { ShowError("The installed package could not be verified", ex); }
@@ -2269,10 +2339,11 @@ public partial class MainForm : Form
 		StudioCard panel = new()
 		{
 			Dock = DockStyle.Top,
-			Height = 148,
+			Width = 650,
+			Height = 108,
 			BackColor = CardColor,
-			Padding = new Padding(18, 12, 18, 12),
-			Margin = new Padding(0, 0, 0, 8),
+			Padding = new Padding(18, 10, 18, 10),
+			Margin = new Padding(0, 0, 0, 10),
 			CornerRadius = 10
 		};
 		testPlanLabel = new Label
@@ -2283,6 +2354,148 @@ public partial class MainForm : Form
 			TextAlign = ContentAlignment.MiddleLeft
 		};
 		panel.Controls.Add(testPlanLabel);
+		return panel;
+	}
+
+	private Control CreateTestStepCard(
+		string number,
+		string title,
+		string description,
+		string buttonText,
+		EventHandler handler,
+		out Button actionButton)
+	{
+		StudioCard card = new()
+		{
+			Width = 650,
+			Height = 72,
+			ColumnCount = 3,
+			RowCount = 1,
+			BackColor = CardColor,
+			Padding = new Padding(8),
+			Margin = new Padding(0, 0, 0, 6),
+			CornerRadius = 10
+		};
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 44));
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 184));
+		Label step = new()
+		{
+			Text = number,
+			Dock = DockStyle.Fill,
+			TextAlign = ContentAlignment.MiddleCenter,
+			Font = new Font("Segoe UI Semibold", 14F, FontStyle.Bold),
+			ForeColor = AccentColor,
+			BackColor = InputColor,
+			Margin = new Padding(0, 0, 12, 0)
+		};
+		TableLayoutPanel copy = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = CardColor,
+			Margin = Padding.Empty,
+			Padding = new Padding(0, 0, 10, 0)
+		};
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+		copy.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		copy.Controls.Add(new Label
+		{
+			Text = title,
+			Dock = DockStyle.Fill,
+			TextAlign = ContentAlignment.MiddleLeft,
+			Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold),
+			ForeColor = Color.White,
+			Margin = Padding.Empty
+		}, 0, 0);
+		copy.Controls.Add(new Label
+		{
+			Text = description,
+			Dock = DockStyle.Fill,
+			TextAlign = ContentAlignment.TopLeft,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 8.1F),
+			AutoEllipsis = true,
+			Margin = Padding.Empty
+		}, 0, 1);
+		actionButton = CreateButton(buttonText, handler);
+		actionButton.Dock = DockStyle.Fill;
+		actionButton.AutoSize = false;
+		actionButton.Margin = new Padding(7, 6, 0, 6);
+		card.Controls.Add(step, 0, 0);
+		card.Controls.Add(copy, 1, 0);
+		card.Controls.Add(actionButton, 2, 0);
+		return card;
+	}
+
+	private Control CreateTestResultsPanel()
+	{
+		StudioCard panel = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = CardColor,
+			Padding = new Padding(16, 12, 16, 16),
+			Margin = new Padding(0, 0, 0, 12),
+			CornerRadius = 10
+		};
+		panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+		panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		panel.Controls.Add(new Label
+		{
+			Text = "LATEST RESULT",
+			Dock = DockStyle.Fill,
+			TextAlign = ContentAlignment.MiddleLeft,
+			Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+			ForeColor = AccentColor,
+			Margin = Padding.Empty
+		}, 0, 0);
+		testOutputBox = NewRichTextBox();
+		testOutputBox.ReadOnly = true;
+		testOutputBox.DetectUrls = true;
+		testOutputBox.Font = new Font("Cascadia Mono", 9F);
+		testOutputBox.Text = "Start with Safe preflight, then work down the highlighted buttons. The exact result and next action will appear here.";
+		testOutputBox.LinkClicked += (_, eventArgs) =>
+		{
+			if (!uiTestMode && Uri.TryCreate(eventArgs.LinkText, UriKind.Absolute, out Uri? uri))
+				Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
+		};
+		panel.Controls.Add(testOutputBox, 0, 1);
+		return panel;
+	}
+
+	private Control CreateTestToolsPanel()
+	{
+		(string text, EventHandler handler)[] actions =
+		[
+			("Check Winget setup", async (_, _) => await RefreshTestEnvironmentAsync(showReport: true)),
+			("Inspect signatures", async (_, _) => await InspectSignaturesAsync()),
+			("Find existing package", async (_, _) => await FindExistingPackageAsync()),
+			("Test in Sandbox", async (_, _) => await TestInSandboxAsync()),
+			("Export test report", async (_, _) => await ExportTestReportAsync())
+		];
+		TableLayoutPanel panel = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 2,
+			RowCount = 3,
+			BackColor = CardColor,
+			Padding = new Padding(10),
+			Margin = new Padding(0, 0, 0, 4)
+		};
+		panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+		panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+		for (int row = 0; row < 3; row++) panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / 3F));
+		for (int index = 0; index < actions.Length; index++)
+		{
+			Button button = CreateButton(actions[index].text, actions[index].handler);
+			button.Dock = DockStyle.Fill;
+			button.AutoSize = false;
+			button.Margin = new Padding(4);
+			panel.Controls.Add(button, index % 2, index / 2);
+		}
 		return panel;
 	}
 
@@ -2863,10 +3076,16 @@ public partial class MainForm : Form
 				navigationButtons.TryGetValue("Test Center", out StudioNavButton? testCenterButton)
 					&& testCenterButton.Text.Contains("Test Center", StringComparison.Ordinal),
 				"Test Center is clearly named in the main navigation");
-			Record(testPlanLabel.Text.Contains("1  SAFE PREFLIGHT", StringComparison.Ordinal)
-				&& testPlanLabel.Text.Contains("2  LOCAL TESTING", StringComparison.Ordinal)
-				&& testPlanLabel.Text.Contains("NEXT:", StringComparison.Ordinal),
+			Record(testPlanLabel.Text.Contains("1  Preflight", StringComparison.Ordinal)
+				&& testPlanLabel.Text.Contains("2  Local testing", StringComparison.Ordinal)
+				&& testPlanLabel.Text.Contains("Next:", StringComparison.Ordinal),
 				"Test Center shows the required order and one clear next action");
+			TableLayoutPanel? testWorkspace = Descendants(this).OfType<TableLayoutPanel>()
+				.FirstOrDefault(panel => panel.AccessibleName == "Test Center split workspace");
+			Record(testWorkspace is { ColumnCount: 2 }
+				&& Descendants(testWorkspace).Any(control => control.AccessibleName == "Required test steps")
+				&& Descendants(testWorkspace).Any(control => control.AccessibleName == "Test results and optional tools"),
+				"Test Center separates required steps from results and optional tools");
 			string[] removedStartActions = ["Continue where you left off", "Restore Last Session", "Open Recent Project"];
 			Record(!Descendants(this).Any(control => removedStartActions.Contains(control.Text, StringComparer.OrdinalIgnoreCase)),
 				"Removed session recovery and recent-project actions are absent from the interface");
@@ -2990,6 +3209,12 @@ public partial class MainForm : Form
 			string preflightReadiness = readinessLabel.Text ?? string.Empty;
 			Record(submitButton is { Enabled: true } && preflightReadiness.StartsWith("SAFE PREFLIGHT PASSED", StringComparison.Ordinal),
 				"Safe Preflight unlocks submission as the final step");
+			localManifestFilesEnabled = true;
+			successfulLocalInstallFingerprint = ProjectFingerprint();
+			verifiedInstalledFingerprint = ProjectFingerprint();
+			UpdateTestPlanStatus();
+			Record(testSubmitButton is { Enabled: true } && testPlanLabel.Text.Contains("without leaving this page", StringComparison.Ordinal),
+				"Completing all four tests unlocks submission directly in Test Center");
 
 			int responsiveTicks = 0;
 			using (System.Windows.Forms.Timer responsivenessTimer = new() { Interval = 20 })
@@ -3054,6 +3279,18 @@ public partial class MainForm : Form
 
 		report.Insert(0, $"Winget Manifest Studio UI verification: {passed} passed, {failed} failed");
 		return report;
+	}
+
+	internal void RenderTabForVerification(string title, string outputPath)
+	{
+		SelectTab(title);
+		Size = new Size(1280, 840);
+		PerformLayout();
+		workspaceTabs.PerformLayout();
+		Application.DoEvents();
+		using Bitmap bitmap = new(ClientSize.Width, ClientSize.Height);
+		DrawToBitmap(bitmap, ClientRectangle);
+		bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
 	}
 
 	private async Task<string?> PickFolderAsync(string title, string description, string? initialPath)

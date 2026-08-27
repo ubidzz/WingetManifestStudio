@@ -136,6 +136,11 @@ internal static class WingetCommandService
 		return RunWithTimeoutAsync("winget.exe", ["list", "--id", packageIdentifier, "--exact", "--accept-source-agreements"], Environment.CurrentDirectory, TimeSpan.FromSeconds(30), cancellationToken);
 	}
 
+	public static Task<CommandResult> ListInstalledPackageByNameAsync(string packageName, CancellationToken cancellationToken = default)
+	{
+		return RunWithTimeoutAsync("winget.exe", ["list", "--name", packageName, "--exact", "--accept-source-agreements"], Environment.CurrentDirectory, TimeSpan.FromSeconds(30), cancellationToken);
+	}
+
 	public static InteractiveCommandSession StartManifestInstallSession(string manifestFolder)
 	{
 		return StartPersistentConsoleSession(

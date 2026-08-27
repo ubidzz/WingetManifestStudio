@@ -23,6 +23,7 @@ internal static class SelfTestRunner
 			TestWingetCreateCommandModes(results);
 			TestCredentialStatusCheck(results);
 			TestTestingEnvironmentChecks(results);
+			TestInstalledVerificationMatching(results);
 			TestRepositoryPathAndLocalization(results);
 			TestProfileRoundTrip(root, results);
 			await TestInstallerInspectionAsync(results);
@@ -205,6 +206,18 @@ ManifestVersion: 1.12.0
 		Assert(!string.IsNullOrWhiteSpace(health.Message), "The Winget health check must always return a beginner-readable result.");
 		Assert(health.IsReady || health.ExitCode != 0, "A failed Winget health check must retain the diagnostic exit code.");
 		results.Add("PASS: Winget health failures are diagnosed before local-test setup opens.");
+	}
+
+	private static void TestInstalledVerificationMatching(List<string> results)
+	{
+		Assert(InstalledPackageVerifier.VersionsMatch("1.1.0", "1.1.0")
+			&& InstalledPackageVerifier.VersionsMatch("1.1.0.0", "1.1")
+			&& !InstalledPackageVerifier.VersionsMatch("1.0.0", "1.1.0"),
+			"Installed-version verification must accept equivalent numeric versions and reject a different release.");
+		Assert(InstalledPackageVerifier.VersionsMatchOutput("Winget Manifest Studio  1.1.0", "1.1.0")
+			&& !InstalledPackageVerifier.VersionsMatchOutput("Winget Manifest Studio  1.0.0", "1.1.0"),
+			"Winget name fallback must still require the expected installed version.");
+		results.Add("PASS: installed-result verification matches Winget, MSI, and display-version formats safely.");
 	}
 
 	private static void TestRepositoryPathAndLocalization(List<string> results)
