@@ -278,7 +278,7 @@ public partial class MainForm : Form
 
 			string recommended = ManifestSchemaSupport.RecommendedForWinget(result.Version);
 			string selected = Read("ManifestVersion");
-			if (selected.Length > 0 && !ManifestSchemaSupport.SupportedVersions.Contains(selected, StringComparer.OrdinalIgnoreCase)) return;
+			if (selected.Length > 0 && !ManifestSchemaSupport.IsCommunitySupported(selected)) return;
 			if (HasUnsavedChanges()) return;
 			Write("ManifestVersion", recommended);
 			project.ManifestVersion = recommended;
@@ -2802,6 +2802,7 @@ public partial class MainForm : Form
 		applyingProjectToControls = true;
 		try
 		{
+			project.ManifestVersion = ManifestSchemaSupport.NormalizeKnownStudioVersion(project.ManifestVersion);
 			project.EnsureInstallerCollection();
 			Write("PackageIdentifier", project.PackageIdentifier);
 			Write("PackageVersion", project.PackageVersion);
@@ -3968,7 +3969,7 @@ public partial class MainForm : Form
 			return prefix + suppliedHint.Trim().TrimEnd('.') + ".";
 		string explanation = key switch
 		{
-			"ManifestVersion" => "Schema version used by the generated YAML; the Studio recommends the newest version supported by the installed Winget client and preserves the version from loaded manifests",
+			"ManifestVersion" => "Schema version used by the generated YAML; 1.12.0 is recommended for Microsoft Winget community submissions",
 			"PackageName" => "The public product name users see in Winget",
 			"Publisher" => "The company or person that publishes the application",
 			"Author" => "The original application author when different from the publisher",
@@ -4654,10 +4655,10 @@ public partial class MainForm : Form
 			SelectTab("Start Here");
 			Record(BuildFileDialogFilter([".msi", ".exe"]).Contains("*.msi;*.exe", StringComparison.Ordinal), "Windows file picker filter includes every supported installer type");
 			Record(fields["ManifestVersion"] is StudioComboBox schemaSelector
-				&& schemaSelector.Items.Contains("1.28.0")
+				&& !schemaSelector.Items.Contains("1.28.0")
 				&& schemaSelector.Items.Contains("1.12.0")
-				&& ManifestSchemaSupport.RecommendedForWinget("v1.29.290") == "1.28.0",
-				"Schema selector offers current and compatible versions and recommends 1.28 for current Winget");
+				&& ManifestSchemaSupport.RecommendedForWinget("v1.29.290") == "1.12.0",
+				"Schema selector offers only community-supported versions and recommends 1.12 for current Winget");
 			Record(Descendants(this).OfType<Button>().Any(button => button.Text == "Open backup folder"),
 				"Review exposes the recoverable manifest backup folder");
 			Record(Descendants(this).OfType<Button>().Any(button => button.Text == "Sandbox install + uninstall"),

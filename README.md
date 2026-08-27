@@ -78,7 +78,7 @@ Complete the required package identity and public information. A package identif
 
 Every field includes beginner guidance. Optional guided controls cover agreements, documentation links, package and Windows-feature dependencies, MSIX capabilities, market rules, expected return codes, unsupported Winget arguments, installed-file detection, and private-source authentication. The raw YAML boxes remain an escape hatch for fields that still have no guided control.
 
-The schema control offers current and compatible manifest versions. New projects default to schema `1.28.0`; after startup the Studio checks the installed Winget version in the background and recommends the newest schema that client supports. Existing projects always retain their loaded `ManifestVersion` unless the user deliberately changes it.
+The schema control offers versions accepted by the Microsoft Winget community repository. New projects default to the currently recommended schema `1.12.0`; older compatible versions remain available when maintaining existing manifests. Projects created by an earlier Studio build with the invalid preview value `1.28.0` are corrected to `1.12.0` in memory before preview or saving.
 
 ### 3. Installers
 

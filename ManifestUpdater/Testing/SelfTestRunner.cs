@@ -601,11 +601,14 @@ ManifestVersion: 1.12.0
 
 	private static async Task TestSchemaRecommendationAndSandboxUninstallAsync(List<string> results)
 	{
-		Assert(ManifestSchemaSupport.RecommendedForWinget("v1.29.290") == "1.28.0"
-			&& ManifestSchemaSupport.RecommendedForWinget("v1.28.10") == "1.28.0"
+		Assert(ManifestSchemaSupport.RecommendedForWinget("v1.29.290") == "1.12.0"
+			&& ManifestSchemaSupport.RecommendedForWinget("v1.28.10") == "1.12.0"
 			&& ManifestSchemaSupport.RecommendedForWinget("v1.12.350") == "1.12.0"
 			&& ManifestSchemaSupport.RecommendedForWinget("v1.10.100") == "1.10.0",
-			"The manifest schema recommendation must follow the installed Winget version.");
+			"The manifest schema recommendation must stay within versions accepted by the Winget community repository.");
+		Assert(ManifestSchemaSupport.NormalizeKnownStudioVersion("1.28.0") == "1.12.0"
+			&& !ManifestSchemaSupport.SupportedVersions.Contains("1.28.0", StringComparer.OrdinalIgnoreCase),
+			"Projects created with the Studio's invalid preview schema must migrate to the recommended community schema.");
 		ManifestProject project = new()
 		{
 			PackageIdentifier = "AnyPublisher.AnyApplication",
@@ -628,9 +631,13 @@ ManifestVersion: 1.12.0
 		});
 		ManifestGenerationResult currentSchema = ManifestService.Generate(project);
 		Assert(project.ManifestVersion == ManifestSchemaSupport.CurrentVersion
-			&& currentSchema.Files.Values.All(yaml => yaml.Contains("ManifestVersion: 1.28.0", StringComparison.Ordinal)
-				&& yaml.Contains(".1.28.0.schema.json", StringComparison.Ordinal)),
-			"A new package must generate every manifest against the selected current schema.");
+			&& currentSchema.Files.Values.All(yaml => yaml.Contains("ManifestVersion: 1.12.0", StringComparison.Ordinal)
+				&& yaml.Contains(".1.12.0.schema.json", StringComparison.Ordinal)),
+			"A new package must generate every manifest against the recommended community schema.");
+		project.ManifestVersion = "1.28.0";
+		Assert(ManifestService.Validate(project).Any(error => error.Contains("not accepted", StringComparison.OrdinalIgnoreCase)),
+			"A schema version that WingetCreate cannot submit must be blocked with beginner-readable guidance.");
+		project.ManifestVersion = ManifestSchemaSupport.CurrentVersion;
 		project.ElevationRequirement = "elevationProhibited";
 		Assert(WingetCommandService.HasSandboxElevationConflict(project),
 			"Sandbox tests must stop before launch when Winget would block an elevationProhibited installer from Microsoft's Administrator session.");

@@ -186,6 +186,8 @@ internal static partial class ManifestService
 		else if (!ManifestVersionRegex().IsMatch(project.ManifestVersion)
 			|| project.ManifestVersion.Split('.').Any(part => !ushort.TryParse(part, out _)))
 			errors.Add($"Manifest Version must use three numeric parts from 0 through 65535, such as {ManifestSchemaSupport.CurrentVersion}.");
+		else if (!ManifestSchemaSupport.IsCommunitySupported(project.ManifestVersion))
+			errors.Add($"Manifest Version {project.ManifestVersion} is not accepted for Winget community submissions. Choose {ManifestSchemaSupport.CurrentVersion} (recommended) or another version shown in the dropdown.");
 		if (string.IsNullOrWhiteSpace(project.PackageName)) errors.Add("Package Name is required.");
 		if (string.IsNullOrWhiteSpace(project.Publisher)) errors.Add("Publisher is required.");
 		if (string.IsNullOrWhiteSpace(project.ShortDescription)) errors.Add("Short Description is required.");

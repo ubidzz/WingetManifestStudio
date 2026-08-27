@@ -204,7 +204,7 @@ internal static class StudioLocalization
 		["Comma-separated"] = "Valores separados por comas",
 		["Comma-separated command aliases. Preserved during updates"] = "Alias de comandos separados por comas; se conservan al actualizar",
 		["Shown to the user after installation"] = "Se muestra al usuario después de la instalación",
-		["Schema version used by the generated YAML; the Studio recommends the newest version supported by the installed Winget client and preserves the version from loaded manifests"] = "Versión del esquema usada por el YAML; Studio recomienda la más reciente compatible con Winget y conserva la versión de los manifiestos cargados",
+		["Schema version used by the generated YAML; 1.12.0 is recommended for Microsoft Winget community submissions"] = "Versión del esquema usada por el YAML; se recomienda 1.12.0 para los envíos a la comunidad de Microsoft Winget",
 		["The public product name users see in Winget"] = "Nombre público del producto que los usuarios ven en Winget",
 		["The company or person that publishes the application"] = "Empresa o persona que publica la aplicación",
 		["The original application author when different from the publisher"] = "Autor original cuando es diferente del editor",
