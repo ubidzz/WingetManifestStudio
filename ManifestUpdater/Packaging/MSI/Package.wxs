@@ -19,8 +19,8 @@
       SourceFile="$(var.StudioProjectDir)\Assets\ManifestUpdater.ico" />
     <Property Id="ARPPRODUCTICON" Value="StudioIcon.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/ubidzz" />
-    <Property Id="ARPHELPLINK" Value="https://dotnet.microsoft.com/download/dotnet/10.0" />
-    <Property Id="ARPCOMMENTS" Value="Requires the Microsoft .NET 10 Desktop Runtime (x64). The runtime is not included in this installer." />
+    <Property Id="ARPHELPLINK" Value="https://github.com/ubidzz/WingetManifestStudio/issues" />
+    <Property Id="ARPCOMMENTS" Value="Includes the Microsoft .NET 10 Windows Desktop runtime for reliable first launch." />
     <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
 
     <StandardDirectory Id="LocalAppDataFolder">

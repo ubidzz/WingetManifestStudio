@@ -37,7 +37,7 @@ It is designed for first-time package publishers while retaining the controls ex
 For normal use:
 
 - Windows 10 or Windows 11, x64.
-- Microsoft .NET 10 Desktop Runtime x64 when using the framework-dependent EXE or MSI.
+- No separate .NET installation is required. Both release files include the Microsoft .NET 10 Windows Desktop runtime.
 - Windows App Installer, which provides the `winget` command.
 - A public HTTPS address for every installer that Winget will download.
 
@@ -47,7 +47,7 @@ WingetCreate is only required for its official commands and submission workflow.
 
 Download `StudioSetup.msi` from the repository's [Releases](https://github.com/ubidzz/WingetManifestStudio/releases) page and run it normally. Administrator permission is not required to edit manifests. Windows may request approval only for operations that inherently require elevation, such as enabling Winget local-manifest testing or running an installer that requires it.
 
-The published setup is intentionally framework-dependent and does **not** bundle the .NET 10 framework. When the runtime is missing, the Windows .NET application host shows the runtime-required prompt and provides the installation path; after installing the Microsoft .NET 10 Desktop Runtime x64, open the Studio again.
+Both `WingetManifestStudio.exe` and `StudioSetup.msi` are self-contained x64 releases. They include the .NET 10 Windows Desktop runtime so a new user can open the Studio immediately without waiting for Windows to locate or install a shared runtime.
 
 ## Guided Workflow
 
@@ -229,7 +229,7 @@ Repository security automation also includes:
 - Dependency Review on pull requests, rejecting newly introduced moderate-or-higher vulnerabilities.
 - Weekly Dependabot updates for NuGet packages and GitHub Actions.
 - Project-policy checks on pushes and pull requests, including required community files, tracked build-output detection, and enforcement of the `StudioSetup.msi` release name.
-- A framework-dependent publish smoke test on pushes and pull requests. It creates the EXE and MSI in an isolated CI folder, verifies their names and size limits, then runs the published functional and startup tests.
+- A self-contained publish smoke test on pushes and pull requests. It creates the EXE and MSI in an isolated CI folder, confirms that both contain the .NET runtime payload, verifies their names and size limits, then runs the published functional and startup tests.
 
 The publish smoke test does not read or change any Visual Studio publish profile. Its isolated files are temporary GitHub Actions output and do not alter a developer's local publish settings.
 
@@ -240,15 +240,15 @@ Visual Studio Publish and normal `dotnet publish` runs automatically build:
 - `WingetManifestStudio.exe`
 - `StudioSetup.msi`
 
-The MSI is always named `StudioSetup.msi`. It contains the framework-dependent application payload and requires the Microsoft .NET 10 Desktop Runtime x64; it does not package the framework itself.
+The MSI is always named `StudioSetup.msi`. Both the MSI and standalone EXE contain the .NET 10 Windows Desktop runtime, so they are larger than framework-dependent builds but avoid the slow or blocked first launch caused by a missing shared runtime.
 
-Example framework-dependent single-file publish:
+Example self-contained single-file publish:
 
 ```powershell
 dotnet publish ManifestUpdater/WingetManifestStudio.csproj `
   -c Release `
   -r win-x64 `
-  --self-contained false `
+  --self-contained true `
   -p:PublishSingleFile=true `
   -p:PublishReadyToRun=true
 ```

@@ -69,13 +69,13 @@
     <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioPublishedExe)&quot;" />
     <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioPublishedExe)&quot;" />
 
-    <Message Text="Preparing the small framework-dependent MSI payload. The installed app requires the Microsoft .NET 10 Desktop Runtime (x64)." Importance="high" />
+    <Message Text="Preparing the self-contained MSI payload with the .NET 10 Windows Desktop runtime included." Importance="high" />
     <RemoveDir Directories="$(_StudioMsiPayloadDirectory)" Condition="Exists('$(_StudioMsiPayloadDirectory)')" />
     <RemoveDir Directories="$(_StudioMsiIntermediateDirectory)" Condition="Exists('$(_StudioMsiIntermediateDirectory)')" />
     <RemoveDir Directories="$(_StudioMsiBuildOutputDirectory)" Condition="Exists('$(_StudioMsiBuildOutputDirectory)')" />
-    <Exec Command="&quot;$(_StudioDotNetHost)&quot; publish &quot;$(MSBuildProjectFullPath)&quot; --configuration Release --runtime win-x64 --self-contained false --nologo &quot;-p:BuildStudioMsi=false&quot; &quot;-p:IntermediateOutputPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:MSBuildProjectExtensionsPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:OutputPath=$(_StudioMsiBuildOutputDirectory)/&quot; &quot;-p:PublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:PublishSingleFile=true&quot; &quot;-p:PublishReadyToRun=true&quot; &quot;-p:DebugType=None&quot; &quot;-p:DebugSymbols=false&quot;" WorkingDirectory="$(MSBuildProjectDirectory)" />
-    <Error Condition="!Exists('$(_StudioMsiPayloadExe)')" Text="The framework-dependent Winget Manifest Studio MSI payload was not created at $(_StudioMsiPayloadExe)." />
-    <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing the framework-dependent MSI application payload..." Importance="high" />
+    <Exec Command="&quot;$(_StudioDotNetHost)&quot; publish &quot;$(MSBuildProjectFullPath)&quot; --configuration Release --runtime win-x64 --self-contained true --nologo &quot;-p:BuildStudioMsi=false&quot; &quot;-p:IntermediateOutputPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:MSBuildProjectExtensionsPath=$(_StudioMsiIntermediateDirectory)/&quot; &quot;-p:OutputPath=$(_StudioMsiBuildOutputDirectory)/&quot; &quot;-p:PublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:PublishSingleFile=true&quot; &quot;-p:PublishReadyToRun=true&quot; &quot;-p:DebugType=None&quot; &quot;-p:DebugSymbols=false&quot;" WorkingDirectory="$(MSBuildProjectDirectory)" />
+    <Error Condition="!Exists('$(_StudioMsiPayloadExe)')" Text="The self-contained Winget Manifest Studio MSI payload was not created at $(_StudioMsiPayloadExe)." />
+    <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing the self-contained MSI application payload..." Importance="high" />
     <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioMsiPayloadExe)&quot;" />
     <Exec Condition="'$(_StudioSigningEnabled)' == 'true'" Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioMsiPayloadExe)&quot;" />
 

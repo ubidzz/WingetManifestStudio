@@ -70,14 +70,26 @@ jobs:
           $projectText = Get-Content -Raw -LiteralPath "ManifestUpdater/WingetManifestStudio.csproj"
           $wixText = Get-Content -Raw -LiteralPath "ManifestUpdater/Packaging/MSI/Package.wxs"
           if (-not $projectText.Contains("StudioSetup.msi", [StringComparison]::Ordinal) -or
+              -not $projectText.Contains("--self-contained true", [StringComparison]::Ordinal) -or
               -not $wixText.Contains("Winget Manifest Studio", [StringComparison]::Ordinal)) {
-            throw "The publish project is not configured for StudioSetup.msi and Winget Manifest Studio."
+            throw "The publish project is not configured for a self-contained StudioSetup.msi release."
+          }
+
+          foreach ($profilePath in @(
+            "ManifestUpdater/Properties/PublishProfiles/FolderProfile.pubxml",
+            "ManifestUpdater/Properties/PublishProfiles/FolderProfile1.pubxml"
+          )) {
+            [xml]$profile = Get-Content -Raw -LiteralPath $profilePath
+            $settings = $profile.Project.PropertyGroup
+            if ($settings.SelfContained -ne "true" -or $settings.PublishSingleFile -ne "true" -or $settings.RuntimeIdentifier -ne "win-x64") {
+              throw "$profilePath must remain a self-contained, single-file win-x64 release profile."
+            }
           }
 
           Write-Host "Repository structure, tracked-file policy, and release names passed."
 
   publish-smoke-test:
-    name: Publish EXE and MSI smoke test
+    name: Publish self-contained EXE and MSI smoke test
     runs-on: windows-latest
     timeout-minutes: 25
 
@@ -94,13 +106,13 @@ jobs:
             ManifestUpdater/WingetManifestStudio.csproj
             ManifestUpdater/Packaging/MSI/WingetManifestStudioInstaller.wixproj
 
-      - name: Publish the framework-dependent release
+      - name: Publish the self-contained release
         shell: pwsh
         run: >-
           dotnet publish ManifestUpdater/WingetManifestStudio.csproj
           --configuration Release
           --runtime win-x64
-          --self-contained false
+          --self-contained true
           --output artifacts/ci-publish
           -p:PublishSingleFile=true
           -p:PublishReadyToRun=true
@@ -124,11 +136,25 @@ jobs:
             throw "The obsolete SynixStudioSetup.msi file was published."
           }
 
+          $unexpectedReleaseFiles = @(Get-ChildItem -LiteralPath $publishDirectory -File | Where-Object {
+            $_.Name -notin @("WingetManifestStudio.exe", "StudioSetup.msi")
+          })
+          if ($unexpectedReleaseFiles.Count -gt 0) {
+            throw "The .NET runtime was not bundled into the two release files. Unexpected files: $($unexpectedReleaseFiles.Name -join ', ')"
+          }
+
           $exeSize = (Get-Item -LiteralPath $studioExe).Length
           $msiSize = (Get-Item -LiteralPath $studioMsi).Length
-          if ($exeSize -gt 25MB -or $msiSize -gt 25MB) {
-            throw "The framework-dependent release is unexpectedly large. EXE: $exeSize bytes; MSI: $msiSize bytes."
+          if ($exeSize -lt 80MB -or $msiSize -lt 30MB) {
+            throw "The release is too small to contain the .NET 10 Windows Desktop runtime. EXE: $exeSize bytes; MSI: $msiSize bytes."
           }
+          if ($exeSize -gt 250MB -or $msiSize -gt 250MB) {
+            throw "The self-contained release is unexpectedly large. EXE: $exeSize bytes; MSI: $msiSize bytes."
+          }
+
+          $env:DOTNET_ROOT = Join-Path $env:RUNNER_TEMP "no-shared-dotnet-runtime"
+          $env:DOTNET_ROOT_X64 = $env:DOTNET_ROOT
+          $env:DOTNET_MULTILEVEL_LOOKUP = "0"
 
           $selfTest = Start-Process -FilePath $studioExe -ArgumentList "--self-test" -WindowStyle Hidden -Wait -PassThru
           if ($selfTest.ExitCode -ne 0) {
