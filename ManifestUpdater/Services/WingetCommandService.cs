@@ -184,15 +184,68 @@ internal static class WingetCommandService
 			"SandboxTest",
 			resultFileName);
 		string verificationScript = BuildSandboxInstallUninstallScript(project, resultFileName);
+		SandboxPowerShellInvocation invocation = CreateSandboxInstallUninstallInvocation(
+			scriptPath,
+			manifestFolder,
+			mapFolder,
+			verificationScript);
 		InteractiveCommandSession session = StartPersistentConsoleSession(
 			"powershell.exe",
-			["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath,
-				"-Manifest", manifestFolder, "-MapFolder", mapFolder, "-Script", verificationScript,
-				"-WarningAction", "Continue"],
+			invocation.Arguments,
 			mapFolder,
 			"Winget Manifest Studio - Sandbox Install and Uninstall Test",
-			"sandbox-install-uninstall");
+			"sandbox-install-uninstall",
+			invocation.Environment,
+			"Microsoft SandboxTest.ps1 (install, verify, and uninstall in Windows Sandbox)");
 		return session with { ResultPath = hostResultPath };
+	}
+
+	internal static SandboxPowerShellInvocation CreateSandboxInstallUninstallInvocation(
+		string scriptPath,
+		string manifestFolder,
+		string mapFolder,
+		string verificationScript)
+	{
+		// SandboxTest.ps1 declares -Script as [ScriptBlock]. A value passed after
+		// powershell.exe -File crosses a process boundary as plain text and cannot be
+		// bound to that parameter. Recreate the ScriptBlock inside the child PowerShell
+		// process, then invoke Microsoft's script within that same process.
+		const string sandboxCommand = """
+			$ErrorActionPreference = 'Stop'
+			try {
+			    $source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:WMS_SANDBOX_VERIFICATION_SCRIPT))
+			    $verification = [ScriptBlock]::Create($source)
+			    & $env:WMS_SANDBOX_TOOL_PATH `
+			        -Manifest $env:WMS_SANDBOX_MANIFEST_FOLDER `
+			        -MapFolder $env:WMS_SANDBOX_MAP_FOLDER `
+			        -Script $verification `
+			        -WarningAction Continue
+			    if (-not $?) { exit 1 }
+			    exit 0
+			} catch {
+			    Write-Error ($_ | Out-String)
+			    exit 1
+			}
+			""";
+		string encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(sandboxCommand));
+		string encodedVerification = Convert.ToBase64String(Encoding.UTF8.GetBytes(verificationScript));
+		string[] arguments =
+		[
+			"-NoLogo",
+			"-NoProfile",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-EncodedCommand",
+			encodedCommand
+		];
+		Dictionary<string, string> environment = new(StringComparer.OrdinalIgnoreCase)
+		{
+			["WMS_SANDBOX_TOOL_PATH"] = scriptPath,
+			["WMS_SANDBOX_MANIFEST_FOLDER"] = manifestFolder,
+			["WMS_SANDBOX_MAP_FOLDER"] = mapFolder,
+			["WMS_SANDBOX_VERIFICATION_SCRIPT"] = encodedVerification
+		};
+		return new SandboxPowerShellInvocation(arguments, environment);
 	}
 
 	internal static string BuildSandboxInstallUninstallScript(ManifestProject project, string resultFileName)
@@ -504,7 +557,9 @@ internal static class WingetCommandService
 		IReadOnlyList<string> arguments,
 		string workingDirectory,
 		string title,
-		string logPrefix)
+		string logPrefix,
+		IReadOnlyDictionary<string, string>? additionalEnvironment = null,
+		string? displayCommand = null)
 	{
 		string logFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudio", "command-logs");
 		Directory.CreateDirectory(logFolder);
@@ -514,7 +569,11 @@ internal static class WingetCommandService
 			$command = $env:WMS_CONSOLE_EXECUTABLE
 			$arguments = @((ConvertFrom-Json -InputObject $env:WMS_CONSOLE_ARGUMENTS))
 			$host.UI.RawUI.WindowTitle = $env:WMS_CONSOLE_TITLE
-			Write-Host ('> ' + $command + ' ' + ($arguments -join ' ')) -ForegroundColor Cyan
+			$displayCommand = $env:WMS_CONSOLE_DISPLAY_COMMAND
+			if ([string]::IsNullOrWhiteSpace($displayCommand)) {
+			    $displayCommand = $command + ' ' + ($arguments -join ' ')
+			}
+			Write-Host ('> ' + $displayCommand) -ForegroundColor Cyan
 			Write-Host ''
 			& $command @arguments 2>&1 | Tee-Object -FilePath $env:WMS_CONSOLE_LOG
 			$code = $LASTEXITCODE
@@ -544,6 +603,12 @@ internal static class WingetCommandService
 		startInfo.Environment["WMS_CONSOLE_ARGUMENTS"] = JsonSerializer.Serialize(arguments);
 		startInfo.Environment["WMS_CONSOLE_TITLE"] = title;
 		startInfo.Environment["WMS_CONSOLE_LOG"] = logPath;
+		startInfo.Environment["WMS_CONSOLE_DISPLAY_COMMAND"] = displayCommand ?? string.Empty;
+		if (additionalEnvironment is not null)
+		{
+			foreach ((string name, string value) in additionalEnvironment)
+				startInfo.Environment[name] = value;
+		}
 		using Process process = Process.Start(startInfo)
 			?? throw new InvalidOperationException("Windows could not start the persistent test console.");
 		return new InteractiveCommandSession(process.Id, logPath);
@@ -587,3 +652,7 @@ internal static class WingetCommandService
 }
 
 internal sealed record InteractiveCommandSession(int ProcessId, string LogPath, string? ResultPath = null);
+
+internal sealed record SandboxPowerShellInvocation(
+	IReadOnlyList<string> Arguments,
+	IReadOnlyDictionary<string, string> Environment);

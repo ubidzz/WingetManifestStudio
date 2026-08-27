@@ -644,6 +644,66 @@ ManifestVersion: 1.12.0
 		string parserError = await parser.StandardError.ReadToEndAsync();
 		await parser.WaitForExitAsync();
 		Assert(parser.ExitCode == 0, "The generated Sandbox install-and-uninstall PowerShell did not parse: " + parserError);
+
+		string binderRoot = Path.Combine(Path.GetTempPath(), "WingetManifestStudio-SandboxBinding-" + Guid.NewGuid().ToString("N"));
+		try
+		{
+			string manifestFolder = Path.Combine(binderRoot, "manifest");
+			string fakeSandboxTool = Path.Combine(binderRoot, "SandboxTest.ps1");
+			string receivedScriptPath = Path.Combine(binderRoot, "received-script.txt");
+			string receivedTypePath = Path.Combine(binderRoot, "received-type.txt");
+			Directory.CreateDirectory(manifestFolder);
+			File.WriteAllText(fakeSandboxTool, """
+				[CmdletBinding()]
+				param(
+				    [string] $Manifest,
+				    [ScriptBlock] $Script,
+				    [string] $MapFolder
+				)
+				[IO.File]::WriteAllText((Join-Path $MapFolder 'received-script.txt'), $Script.ToString(), [Text.UTF8Encoding]::new($false))
+				[IO.File]::WriteAllText((Join-Path $MapFolder 'received-type.txt'), $Script.GetType().FullName, [Text.UTF8Encoding]::new($false))
+				exit 0
+				""", new UTF8Encoding(false));
+			SandboxPowerShellInvocation invocation = WingetCommandService.CreateSandboxInstallUninstallInvocation(
+				fakeSandboxTool,
+				manifestFolder,
+				binderRoot,
+				script);
+			Assert(!invocation.Arguments.Contains(script, StringComparer.Ordinal)
+				&& invocation.Environment.TryGetValue("WMS_SANDBOX_VERIFICATION_SCRIPT", out string? encodedSandboxScript)
+				&& encodedSandboxScript is not null
+				&& Encoding.UTF8.GetString(Convert.FromBase64String(encodedSandboxScript)) == script,
+				"The Sandbox verification script must cross the process boundary without becoming a plain -File argument.");
+
+			ProcessStartInfo binderStartInfo = new()
+			{
+				FileName = "powershell.exe",
+				WorkingDirectory = binderRoot,
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			foreach (string argument in invocation.Arguments) binderStartInfo.ArgumentList.Add(argument);
+			foreach ((string name, string value) in invocation.Environment) binderStartInfo.Environment[name] = value;
+			using Process binder = Process.Start(binderStartInfo)
+				?? throw new InvalidOperationException("The Sandbox ScriptBlock binding verification could not start.");
+			Task<string> binderOutputTask = binder.StandardOutput.ReadToEndAsync();
+			Task<string> binderErrorTask = binder.StandardError.ReadToEndAsync();
+			using CancellationTokenSource binderTimeout = new(TimeSpan.FromSeconds(15));
+			await binder.WaitForExitAsync(binderTimeout.Token);
+			string binderOutput = await binderOutputTask;
+			string binderError = await binderErrorTask;
+			Assert(binder.ExitCode == 0
+				&& File.Exists(receivedScriptPath)
+				&& File.ReadAllText(receivedScriptPath) == script
+				&& File.ReadAllText(receivedTypePath) == "System.Management.Automation.ScriptBlock",
+				"Microsoft's SandboxTest.ps1 must receive a real ScriptBlock. " + binderOutput + binderError);
+		}
+		finally
+		{
+			try { if (Directory.Exists(binderRoot)) Directory.Delete(binderRoot, true); } catch { }
+		}
 		results.Add("PASS: current-schema recommendation and package-independent Sandbox uninstall verification.");
 	}
 
