@@ -57,7 +57,7 @@ jobs:
             throw "Generated, user-specific, or secret-bearing files are tracked: $($trackedGeneratedFiles -join ', ')"
           }
 
-          $legacySetupReferences = @(git grep -n -I -- "SynixStudioSetup.msi")
+          $legacySetupReferences = @(git grep -n -I -e "SynixStudioSetup.msi" -- . ":(exclude).github/workflows/repository-checks.yml")
           $grepExitCode = $LASTEXITCODE
           $global:LASTEXITCODE = 0
           if ($grepExitCode -notin @(0, 1)) {
