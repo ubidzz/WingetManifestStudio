@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using YamlDotNet.RepresentationModel;
 
 namespace ManifestUpdater;
@@ -24,9 +25,7 @@ internal static class SelfTestRunner
 			TestTestingEnvironmentChecks(results);
 			TestRepositoryPathAndLocalization(results);
 			TestProfileRoundTrip(root, results);
-			TestSessionRecoveryAndRecentProjects(root, results);
 			await TestInstallerInspectionAsync(results);
-			await TestElevatedResultFileMonitoringAsync(root, results);
 			await TestWingetHealthDiagnosticAsync(results);
 			TestAuthenticodeInspection(root, results);
 			int installerIndex = Array.FindIndex(args, argument => string.Equals(argument, "--verify-installer", StringComparison.OrdinalIgnoreCase));
@@ -181,9 +180,23 @@ ManifestVersion: 1.12.0
 
 	private static void TestTestingEnvironmentChecks(List<string> results)
 	{
-		_ = WingetCommandService.IsLocalManifestFilesEnabled();
+		ProcessStartInfo enableCommand = WingetCommandService.CreateEnableLocalManifestFilesStartInfo();
+		Assert(enableCommand.UseShellExecute && enableCommand.Verb == "runas" && enableCommand.WindowStyle == ProcessWindowStyle.Hidden,
+			"Local manifest setup must use one hidden, elevated Winget process.");
+		Assert(enableCommand.FileName.EndsWith("winget.exe", StringComparison.OrdinalIgnoreCase)
+			&& enableCommand.ArgumentList.SequenceEqual(["settings", "--enable", "LocalManifestFiles"]),
+			"Local manifest setup must call Winget directly with the official administrator-setting arguments.");
+		Assert(!enableCommand.FileName.Contains("powershell", StringComparison.OrdinalIgnoreCase),
+			"Local manifest setup must not open the previous PowerShell wrapper.");
+		const string enabledInfo = "Windows Package Manager v1.29.290\r\n\r\nAdmin Setting State\r\nLocalManifestFiles                        Enabled";
+		const string disabledInfo = "Windows Package Manager v1.29.290\r\n\r\nAdmin Setting State\r\nLocalManifestFiles                        Disabled";
+		Assert(WingetCommandService.ParseLocalManifestFilesEnabled(enabledInfo)
+			&& !WingetCommandService.ParseLocalManifestFilesEnabled(disabledInfo),
+			"Winget --info must be the authoritative local-manifest setting check.");
+		Assert(WingetCommandService.ParseWingetVersion(enabledInfo) == "v1.29.290",
+			"Winget health checks must retain its version while reading administrator settings.");
 		_ = WingetCommandService.IsWindowsSandboxAvailable();
-		results.Add("PASS: local-manifest and Windows Sandbox readiness checks are non-invasive.");
+		results.Add("PASS: local-manifest setup calls Winget directly and reads the current administrator setting.");
 	}
 
 	private static async Task TestWingetHealthDiagnosticAsync(List<string> results)
@@ -214,52 +227,6 @@ ManifestVersion: 1.12.0
 		Assert(unsigned.Status == "Unsigned" && !unsigned.IsSigned && !unsigned.IsTrusted,
 			"An unsigned local file must finish inspection with the explicit Unsigned result.");
 		results.Add("PASS: Authenticode inspection clearly distinguishes unsigned files from signed files.");
-	}
-
-	private static void TestSessionRecoveryAndRecentProjects(string root, List<string> results)
-	{
-		string stateRoot = Path.Combine(root, "local-state");
-		string firstFolder = Path.Combine(root, "recent-one");
-		string missingFolder = Path.Combine(root, "recent-missing");
-		Directory.CreateDirectory(firstFolder);
-		StudioStateStore.StateFolderOverride = stateRoot;
-		try
-		{
-			ManifestProject saved = SampleProject(firstFolder);
-			StudioStateStore.SaveRecovery(saved);
-			ManifestProject? recovered = StudioStateStore.LoadRecovery();
-			Assert(recovered is not null
-				&& recovered.PackageIdentifier == saved.PackageIdentifier
-				&& recovered.Installers.Count == saved.Installers.Count,
-				"Last-session recovery must restore project fields and installer rows.");
-
-			StudioStateStore.SaveRecovery(new ManifestProject());
-			ManifestProject? afterBlankClose = StudioStateStore.LoadRecovery();
-			Assert(afterBlankClose?.PackageIdentifier == saved.PackageIdentifier,
-				"Closing an untouched blank window must not erase the prior recoverable session.");
-
-			StudioStateStore.AddRecentFolder(missingFolder);
-			StudioStateStore.AddRecentFolder(firstFolder);
-			IReadOnlyList<string> recent = StudioStateStore.GetRecentFolders();
-			Assert(recent.Count == 1 && Path.GetFullPath(recent[0]) == Path.GetFullPath(firstFolder),
-				"Recent projects must retain valid folders and hide folders that no longer exist.");
-			results.Add("PASS: last-session recovery and recent-project state are durable and safe.");
-		}
-		finally
-		{
-			StudioStateStore.StateFolderOverride = null;
-		}
-	}
-
-	private static async Task TestElevatedResultFileMonitoringAsync(string root, List<string> results)
-	{
-		string resultPath = Path.Combine(root, "elevated-result.log");
-		await File.WriteAllTextAsync(resultPath, "Exit code: 0\r\nLocal manifest testing enabled.");
-		CommandResult result = await WingetCommandService.WaitForElevatedCommandAsync(
-			new ElevatedCommandSession(Environment.ProcessId, resultPath));
-		Assert(result.ExitCode == 0 && result.CombinedOutput.Contains("enabled", StringComparison.OrdinalIgnoreCase),
-			"The one-time administrator step must use its result file without opening the elevated process handle.");
-		results.Add("PASS: administrator command completion is monitored without an access-denied process handle.");
 	}
 
 	private static void TestNewProject(string root, List<string> results)

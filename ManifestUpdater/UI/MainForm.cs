@@ -61,8 +61,6 @@ public partial class MainForm : Form
 	private bool wingetCreateReady;
 	private System.Windows.Forms.Timer? wingetCreateStartupTimer;
 	private System.Windows.Forms.Timer? tokenStatusTimer;
-	private System.Windows.Forms.Timer? recoveryTimer;
-	private ContextMenuStrip? recentProjectsMenu;
 	private string latestTestReport = "No test report has been generated yet.";
 	private readonly Dictionary<Control, string> originalInterfaceText = new(ReferenceEqualityComparer.Instance);
 	private bool applyingLanguage;
@@ -75,6 +73,7 @@ public partial class MainForm : Form
 	private bool workspaceInitialized;
 	private bool applyingProjectToControls;
 	private WingetHealthResult? wingetHealth;
+	private bool localManifestFilesEnabled;
 	private bool testEnvironmentCheckRunning;
 	private DateTimeOffset wingetHealthCheckedAt;
 	private string successfulLocalInstallFingerprint = string.Empty;
@@ -185,21 +184,12 @@ public partial class MainForm : Form
 
 	protected override void OnFormClosed(FormClosedEventArgs eventArgs)
 	{
-		if (!uiTestMode)
-		{
-			try { ReadProjectFromControls(); StudioStateStore.SaveRecovery(project); } catch { }
-		}
 		wingetCreateStartupTimer?.Stop();
 		wingetCreateStartupTimer?.Dispose();
 		wingetCreateStartupTimer = null;
 		tokenStatusTimer?.Stop();
 		tokenStatusTimer?.Dispose();
 		tokenStatusTimer = null;
-		recoveryTimer?.Stop();
-		recoveryTimer?.Dispose();
-		recoveryTimer = null;
-		recentProjectsMenu?.Dispose();
-		recentProjectsMenu = null;
 		fieldErrors.Dispose();
 		base.OnFormClosed(eventArgs);
 	}
@@ -368,9 +358,6 @@ public partial class MainForm : Form
 		FlowLayoutPanel content = NewScrollFlow();
 		content.Padding = new Padding(18, 20, 18, 30);
 		content.Controls.Add(CreateHeroCard());
-		content.Controls.Add(CreateWorkflowCard("↻", "Continue where you left off", "Restore the last project you edited, including unsaved field values and attached local installer paths. Recovery information stays on this computer and never includes a GitHub token.",
-			("Restore Last Session", (_, _) => RestoreLastSession()),
-			("Open Recent Project", (sender, _) => ShowRecentProjects(sender as Control))));
 		content.Controls.Add(CreateWorkflowCard("1", "Choose what you are doing", "Load an existing manifest folder to update a package, or start a new project and choose an empty output folder.",
 			("Load existing manifests", async (_, _) => await LoadManifestsAsync()),
 			("Create a new project", (_, _) => { NewProject(); SelectTab("Package Details"); })));
@@ -727,63 +714,6 @@ public partial class MainForm : Form
 		SetStatus("New project created. Choose an output folder and enter package details.");
 	}
 
-	private void RestoreLastSession()
-	{
-		if (uiTestMode) { SetStatus("TEST: Last-session recovery opened safely."); return; }
-		try
-		{
-			ManifestProject? recovered = StudioStateStore.LoadRecovery();
-			if (recovered is null)
-			{
-				MessageBox.Show(this, "There is no recoverable session on this computer yet.", "Restore last session", MessageBoxButtons.OK, MessageBoxIcon.Information);
-				return;
-			}
-			ApplyRecoveredProject(recovered);
-		}
-		catch (Exception ex) { ShowError("The last session could not be restored", ex); }
-	}
-
-	private void ApplyRecoveredProject(ManifestProject recovered)
-	{
-		project = recovered;
-		ApplyProjectToControls();
-		SelectTab("Package Details");
-		int missingFiles = project.Installers.Count(installer =>
-			!string.IsNullOrWhiteSpace(installer.LocalFile) && !File.Exists(installer.LocalFile));
-		string identity = string.Join(' ', new[] { project.PackageIdentifier, project.PackageVersion }.Where(value => !string.IsNullOrWhiteSpace(value)));
-		SetStatus($"Restored {identity.IfEmpty("the last project")} with {project.Installers.Count} installer(s)."
-			+ (missingFiles > 0 ? $" Reattach {missingFiles} local file(s) that moved." : " Local installer paths are available."));
-	}
-
-	private void ShowRecentProjects(Control? anchor)
-	{
-		if (uiTestMode) { SetStatus("TEST: Recent projects opened safely."); return; }
-		IReadOnlyList<string> folders = StudioStateStore.GetRecentFolders();
-		if (folders.Count == 0 || anchor is null)
-		{
-			MessageBox.Show(this, "No recent manifest folders are available yet.", "Recent projects", MessageBoxButtons.OK, MessageBoxIcon.Information);
-			return;
-		}
-		ContextMenuStrip menu = PrepareRecentProjectsMenu(folders);
-		menu.Show(anchor, new Point(0, anchor.Height + 2));
-	}
-
-	private ContextMenuStrip PrepareRecentProjectsMenu(IReadOnlyList<string> folders)
-	{
-		recentProjectsMenu ??= new ContextMenuStrip { ShowImageMargin = false, BackColor = CardColor, ForeColor = Color.White, Renderer = new StudioMenuRenderer() };
-		ContextMenuStrip menu = recentProjectsMenu;
-		menu.Items.Clear();
-		foreach (string folder in folders)
-		{
-			ToolStripMenuItem item = new(folder) { ToolTipText = folder };
-			item.Click += async (_, _) => await LoadManifestFolderAsync(folder);
-			menu.Items.Add(item);
-		}
-		// Keep the menu alive until the form closes. Disposing it from Closed races
-		// with WinForms' own dropdown-closing message and crashes the application.
-		return menu;
-	}
-
 	private void SuggestPackageIdentifier()
 	{
 		string publisher = CleanIdentifierPart(Read("Publisher").IfEmpty(Read("Author")));
@@ -839,7 +769,6 @@ public partial class MainForm : Form
 				throw new InvalidDataException("No Winget manifest YAML files were found. Choose the package or version folder that contains the version, installer, and locale YAML files.");
 			project = loadedProject;
 			ApplyProjectToControls();
-			StudioStateStore.AddRecentFolder(selectedPath);
 			SelectTab("Package Details");
 			SetStatus(project.LoadedFromExistingManifests
 				? $"Loaded {project.PackageIdentifier} {project.PackageVersion}. Installer hashes came from the selected YAML and have not been rechecked yet."
@@ -1615,7 +1544,7 @@ public partial class MainForm : Form
 	{
 		if (uiTestMode)
 		{
-			wingetHealth = new WingetHealthResult(true, "Safe UI test", 0, "Windows Package Manager check was simulated safely.");
+			wingetHealth = new WingetHealthResult(true, "Safe UI test", 0, "Windows Package Manager check was simulated safely.", localManifestFilesEnabled);
 			UpdateTestPlanStatus();
 			if (showReport) SetStatus("TEST: Winget setup check completed without running an external command.");
 			return true;
@@ -1636,6 +1565,7 @@ public partial class MainForm : Form
 		{
 			SetStatus("Checking Windows Package Manager before testing...");
 			wingetHealth = await WingetCommandService.CheckWingetHealthAsync();
+			localManifestFilesEnabled = localManifestFilesEnabled || wingetHealth.LocalManifestFilesEnabled;
 			wingetHealthCheckedAt = DateTimeOffset.Now;
 			UpdateTestPlanStatus();
 			if (showReport)
@@ -1643,7 +1573,7 @@ public partial class MainForm : Form
 				testOutputBox.Text = "TEST SETUP CHECK\r\n\r\n"
 					+ $"Winget: {(wingetHealth.IsReady ? "READY" : "NOT READY")}\r\n"
 					+ (wingetHealth.Version.Length > 0 ? "Version: " + wingetHealth.Version + "\r\n" : string.Empty)
-					+ "Local manifest setting: " + (WingetCommandService.IsLocalManifestFilesEnabled() ? "ENABLED" : "NOT ENABLED") + "\r\n\r\n"
+					+ "Local manifest setting: " + (localManifestFilesEnabled ? "ENABLED" : "NOT ENABLED") + "\r\n\r\n"
 					+ wingetHealth.Message
 					+ (wingetHealth.IsReady ? "\r\n\r\nNEXT: Run step 1, then follow the numbered buttons." : "\r\n\r\nNEXT: Open Windows Settings > Apps > Installed apps > App Installer > Advanced options, choose Repair, install Microsoft Store updates, and run Check Test Setup again.");
 				latestTestReport = testOutputBox.Text;
@@ -1666,7 +1596,7 @@ public partial class MainForm : Form
 		string fingerprint = ProjectFingerprint();
 		bool projectReady = errors.Count == 0;
 		bool preflightReady = string.Equals(successfulPreflightFingerprint, fingerprint, StringComparison.Ordinal);
-		bool localTestingEnabled = WingetCommandService.IsLocalManifestFilesEnabled();
+		bool localTestingEnabled = localManifestFilesEnabled;
 		bool installPassed = string.Equals(successfulLocalInstallFingerprint, fingerprint, StringComparison.Ordinal);
 		bool installedVerified = string.Equals(verifiedInstalledFingerprint, fingerprint, StringComparison.Ordinal);
 		string wingetState = wingetHealth is null ? "NOT CHECKED" : wingetHealth.IsReady ? $"READY ({wingetHealth.Version})" : "NOT READY";
@@ -1711,6 +1641,8 @@ public partial class MainForm : Form
 	{
 		if (uiTestMode)
 		{
+			localManifestFilesEnabled = true;
+			UpdateTestPlanStatus();
 			SetStatus("TEST: Administrator settings were not opened.");
 			return true;
 		}
@@ -1721,7 +1653,7 @@ public partial class MainForm : Form
 			SelectTab("Test Center");
 			return false;
 		}
-		if (WingetCommandService.IsLocalManifestFilesEnabled())
+		if (localManifestFilesEnabled)
 		{
 			UpdateTestPlanStatus();
 			SetStatus("Local manifest testing is already enabled. Continue with step 3.");
@@ -1730,7 +1662,7 @@ public partial class MainForm : Form
 		if (askForConfirmation)
 		{
 			DialogResult answer = MessageBox.Show(this,
-				"Winget requires a one-time administrator confirmation to enable LocalManifestFiles for this Windows account. The Studio will wait for Winget, verify the result automatically, and close the setup window. Continue?",
+				"Winget requires one Windows administrator approval to enable local manifest testing. No PowerShell window will open. The Studio will run Winget directly in the background and show the result here. Continue?",
 				"Step 2 — Enable local manifest testing", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 			if (answer != DialogResult.Yes) return false;
 		}
@@ -1738,21 +1670,26 @@ public partial class MainForm : Form
 		try
 		{
 			SetBusy(true, "Waiting for the one-time Winget administrator setting...");
-			ElevatedCommandSession session = WingetCommandService.StartEnableLocalManifestFilesElevated();
-			testOutputBox.Text = $"STEP 2 — ENABLING LOCAL TESTING\r\n\r\nApprove the Windows administrator prompt. Winget has up to 45 seconds to finish. The setup window closes automatically.\r\n\r\nProcess ID: {session.ProcessId}";
+			testOutputBox.Text = "STEP 2 — ENABLING LOCAL TESTING\r\n\r\nApprove the Windows administrator prompt. Winget is running directly in the background; there is no PowerShell window to wait on.";
 			SelectTab("Test Center");
 			using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(operationCancellation!.Token);
 			timeout.CancelAfter(TimeSpan.FromSeconds(60));
-			CommandResult result = await WingetCommandService.WaitForElevatedCommandAsync(session, timeout.Token);
-			bool enabled = WingetCommandService.IsLocalManifestFilesEnabled();
+			CommandResult result = await WingetCommandService.EnableLocalManifestFilesElevatedAsync(timeout.Token);
+			localManifestFilesEnabled = result.ExitCode == 0;
+			if (localManifestFilesEnabled)
+			{
+				wingetHealth = await WingetCommandService.CheckWingetHealthAsync(timeout.Token);
+				wingetHealthCheckedAt = DateTimeOffset.Now;
+				localManifestFilesEnabled = localManifestFilesEnabled || wingetHealth.LocalManifestFilesEnabled;
+			}
 			testOutputBox.Text = "STEP 2 — LOCAL TESTING RESULT\r\n\r\n"
-				+ (enabled ? "PASS: Winget LocalManifestFiles is enabled for this Windows account." : "FAIL: Winget did not enable LocalManifestFiles for this Windows account.")
+				+ (localManifestFilesEnabled ? "PASS: Winget LocalManifestFiles is enabled. Step 2 is complete." : "FAIL: Winget did not enable LocalManifestFiles.")
 				+ "\r\n\r\n" + result.CombinedOutput
-				+ (enabled ? "\r\n\r\nNEXT: Choose 3 Test Install Here." : "\r\n\r\nChoose Check Test Setup. If a different administrator account was used, sign in with the same Windows account that runs this Studio and try again.");
+				+ (localManifestFilesEnabled ? "\r\n\r\nNEXT: Choose 3 Test Install Here." : "\r\n\r\nChoose Check Test Setup. If Windows requested credentials for a different administrator account, Winget cannot apply this setting to the non-administrator account.");
 			latestTestReport = testOutputBox.Text;
 			UpdateTestPlanStatus();
-			SetStatus(enabled ? "Local manifest testing is enabled. Continue with step 3." : "Local testing was not enabled. Review the exact result in Test Center.");
-			return enabled;
+			SetStatus(localManifestFilesEnabled ? "Local manifest testing is enabled. Continue with step 3." : "Local testing was not enabled. Review the exact result in Test Center.");
+			return localManifestFilesEnabled;
 		}
 		catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
 		{
@@ -1803,7 +1740,7 @@ public partial class MainForm : Form
 			ReadProjectFromControls();
 			fingerprint = ProjectFingerprint();
 		}
-		if (!WingetCommandService.IsLocalManifestFilesEnabled())
+		if (!localManifestFilesEnabled)
 		{
 			DialogResult enable = MessageBox.Show(this,
 				"Step 2 Local Testing is not enabled yet. Enable it now, verify the result automatically, and then continue this installation test?",
@@ -2440,7 +2377,6 @@ public partial class MainForm : Form
 			testCenterButton.Enabled = currentReview && reviewProgress == ReviewProgress.Validated && !preflightCurrent && !isBusy;
 			submitButton.Enabled = preflightCurrent && reviewProgress == ReviewProgress.Validated && !isBusy;
 			previewModeButton.Enabled = technicalPreviewText.Length > 0 && !isBusy;
-			ScheduleRecoverySave();
 		}
 		finally
 		{
@@ -2461,23 +2397,6 @@ public partial class MainForm : Form
 		.Replace("Package Identifier", "Package ID", StringComparison.OrdinalIgnoreCase)
 		.Replace("Installer URL", "download URL", StringComparison.OrdinalIgnoreCase)
 		.TrimEnd('.');
-
-
-	private void ScheduleRecoverySave()
-	{
-		if (uiTestMode || IsDisposed || Disposing) return;
-		recoveryTimer ??= new System.Windows.Forms.Timer { Interval = 1200 };
-		recoveryTimer.Stop();
-		recoveryTimer.Tick -= RecoveryTimer_Tick;
-		recoveryTimer.Tick += RecoveryTimer_Tick;
-		recoveryTimer.Start();
-	}
-
-	private void RecoveryTimer_Tick(object? sender, EventArgs eventArgs)
-	{
-		recoveryTimer?.Stop();
-		try { ReadProjectFromControls(); StudioStateStore.SaveRecovery(project); } catch { }
-	}
 
 	private Control CreateInstallerDefaults()
 	{
@@ -2948,6 +2867,9 @@ public partial class MainForm : Form
 				&& testPlanLabel.Text.Contains("2  LOCAL TESTING", StringComparison.Ordinal)
 				&& testPlanLabel.Text.Contains("NEXT:", StringComparison.Ordinal),
 				"Test Center shows the required order and one clear next action");
+			string[] removedStartActions = ["Continue where you left off", "Restore Last Session", "Open Recent Project"];
+			Record(!Descendants(this).Any(control => removedStartActions.Contains(control.Text, StringComparer.OrdinalIgnoreCase)),
+				"Removed session recovery and recent-project actions are absent from the interface");
 
 			StudioTextBox[] textBoxes = Descendants(this).OfType<StudioTextBox>().Where(control => control.Enabled && !control.ReadOnly).ToArray();
 			foreach (StudioTextBox textBox in textBoxes)
@@ -3017,28 +2939,6 @@ public partial class MainForm : Form
 					&& Read("ShortDescription") == "Loaded from existing YAML"
 					&& installerGrid.Rows.Count == 1,
 				"Loaded YAML values populate every package field and installer row");
-
-			ManifestProject recoveredProject = new()
-			{
-				PackageIdentifier = "Contoso.Recovered",
-				PackageVersion = "4.3.2",
-				ManifestFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudioRecoveredUiTest"),
-				Publisher = "Contoso",
-				PackageName = "Recovered Package",
-				License = "MIT",
-				ShortDescription = "Recovered session"
-			};
-			recoveredProject.Installers.Add(new InstallerArtifact { InstallerUrl = "https://example.invalid/recovered.exe", Architecture = "x64", InstallerType = "exe", Sha256 = new string('D', 64) });
-			ApplyRecoveredProject(recoveredProject);
-			Record(Read("PackageIdentifier") == "Contoso.Recovered" && Read("PackageVersion") == "4.3.2" && installerGrid.Rows.Count == 1,
-				"Restore Last Session repopulates the form and installer grid");
-
-			ContextMenuStrip recentMenu = PrepareRecentProjectsMenu([Path.GetTempPath()]);
-			recentMenu.Show(navigationButtons["Start Here"], new Point(0, navigationButtons["Start Here"].Height + 2));
-			Application.DoEvents();
-			recentMenu.Close();
-			Application.DoEvents();
-			Record(!recentMenu.IsDisposed, "Closing Recent Projects does not dispose a menu still owned by WinForms");
 
 			project.Installers.Clear();
 			InstallerArtifact gridItem = new()
