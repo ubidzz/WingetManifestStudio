@@ -2531,7 +2531,12 @@ public partial class MainForm : Form
 		{
 			ReadProjectFromControls();
 			cleanFolder = ManifestService.CreateCleanManifestFolder(ManifestService.Generate(project));
-			await RunToolAsync("submit", QuoteArgument(cleanFolder), cleanFolder);
+			bool cleanupTransferred = await RunToolAsync(
+				"submit",
+				QuoteArgument(cleanFolder),
+				cleanFolder,
+				cleanFolder);
+			if (cleanupTransferred) cleanFolder = null;
 		}
 		finally
 		{
@@ -2556,9 +2561,13 @@ public partial class MainForm : Form
 		};
 	}
 
-	private async Task RunOfficialCommandAsync() => await RunToolAsync(toolCommandBox.Text, toolArgumentsBox.Text);
+	private async Task RunOfficialCommandAsync() => _ = await RunToolAsync(toolCommandBox.Text, toolArgumentsBox.Text);
 
-	private async Task RunToolAsync(string command, string arguments, string? workingDirectory = null)
+	private async Task<bool> RunToolAsync(
+		string command,
+		string arguments,
+		string? workingDirectory = null,
+		string? cleanupFolderAfterInteractive = null)
 	{
 		if (uiTestMode)
 		{
@@ -2566,13 +2575,14 @@ public partial class MainForm : Form
 			SelectTab("Official Tool Commands");
 			SetStatus("TEST: Official command completed safely without launching a process.");
 			await Task.CompletedTask;
-			return;
+			return false;
 		}
 		if (!wingetCreateReady)
 		{
 			SetStatus("WingetCreate is still preparing. Local manifest tools remain available while it finishes.");
-			return;
+			return false;
 		}
+		bool cleanupTransferred = false;
 		try
 		{
 			SetBusy(true);
@@ -2581,7 +2591,13 @@ public partial class MainForm : Form
 			string commandFolder = string.IsNullOrWhiteSpace(workingDirectory) ? project.ManifestFolder : workingDirectory;
 			if (WingetCommandService.RequiresInteractiveConsole(command, arguments))
 			{
-				InteractiveCommandSession session = WingetCommandService.StartWingetCreateInteractiveSession(command, arguments, commandFolder);
+				InteractiveCommandSession session = WingetCommandService.StartWingetCreateInteractiveSession(
+					command,
+					arguments,
+					commandFolder,
+					cleanupFolderAfterInteractive);
+				cleanupTransferred = !string.IsNullOrWhiteSpace(session.CleanupFolder);
+				_ = MonitorInteractiveCommandAsync(session, command);
 				toolOutputBox.AppendText(
 					"WingetCreate opened in a persistent console because this command asks interactive questions."
 					+ Environment.NewLine
@@ -2589,8 +2605,7 @@ public partial class MainForm : Form
 					+ Environment.NewLine
 					+ $"Process ID: {session.ProcessId}");
 				SetStatus("WingetCreate opened an interactive console. Complete the questions there.");
-				_ = MonitorInteractiveCommandAsync(session, command);
-				return;
+				return cleanupTransferred;
 			}
 			CommandResult result = await WingetCommandService.RunWingetCreateAsync(
 				command,
@@ -2599,8 +2614,13 @@ public partial class MainForm : Form
 				operationCancellation!.Token);
 			toolOutputBox.AppendText(result.CombinedOutput);
 			SetStatus(result.ExitCode == 0 ? "WingetCreate completed successfully." : $"WingetCreate exited with code {result.ExitCode}.");
+			return false;
 		}
-		catch (Exception ex) { ShowError("WingetCreate could not run", ex); }
+		catch (Exception ex)
+		{
+			ShowError("WingetCreate could not run", ex);
+			return cleanupTransferred;
+		}
 		finally { SetBusy(false); }
 	}
 
@@ -2632,7 +2652,7 @@ public partial class MainForm : Form
 		}
 		finally
 		{
-			try { if (File.Exists(session.LogPath)) File.Delete(session.LogPath); } catch { }
+			WingetCommandService.CleanupInteractiveCommandSessionArtifacts(session);
 		}
 	}
 

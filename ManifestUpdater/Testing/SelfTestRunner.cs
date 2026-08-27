@@ -26,7 +26,7 @@ internal static class SelfTestRunner
 			TestCleanValidationFolder(root, results);
 			TestBeginnerValidation(results);
 			TestDynamicPackageValidation(results);
-			TestWingetCreateCommandModes(results);
+			TestWingetCreateCommandModes(root, results);
 			TestCredentialStatusCheck(results);
 			TestTestingEnvironmentChecks(results);
 			await TestSchemaRecommendationAndSandboxUninstallAsync(results);
@@ -562,7 +562,7 @@ ManifestVersion: 1.12.0
 		results.Add("PASS: clean validation staging excludes manifest backup folders.");
 	}
 
-	private static void TestWingetCreateCommandModes(List<string> results)
+	private static void TestWingetCreateCommandModes(string root, List<string> results)
 	{
 		Assert(WingetCommandService.RequiresInteractiveConsole("new", string.Empty), "New manifests require an interactive console.");
 		Assert(WingetCommandService.RequiresInteractiveConsole("new-locale", "--locale en-US"), "New locale manifests require an interactive console.");
@@ -583,7 +583,20 @@ ManifestVersion: 1.12.0
 			&& tokenArguments is not null
 			&& tokenArguments.Contains("token", StringComparison.Ordinal)
 			&& tokenArguments.Contains("--store", StringComparison.Ordinal), "The exact token --store command must reach WingetCreate.");
-		results.Add("PASS: WingetCreate interactive commands are routed to a real console.");
+		string submissionFolder = ManifestService.CreateCleanManifestFolder(
+			ManifestService.Generate(SampleProject(Path.Combine(root, "submission-source"))));
+		string submissionLog = Path.Combine(submissionFolder, "interactive-command.log");
+		File.WriteAllText(submissionLog, "submission test");
+		InteractiveCommandSession submissionSession = new(
+			0,
+			submissionLog,
+			CleanupFolder: submissionFolder);
+		Assert(Directory.Exists(submissionFolder),
+			"The clean submission folder must remain available while the interactive command owns it.");
+		WingetCommandService.CleanupInteractiveCommandSessionArtifacts(submissionSession);
+		Assert(!Directory.Exists(submissionFolder),
+			"The clean submission folder must be removed after the interactive WingetCreate session finishes.");
+		results.Add("PASS: WingetCreate interactive commands keep submission manifests alive until the console finishes.");
 	}
 
 	private static async Task TestSchemaRecommendationAndSandboxUninstallAsync(List<string> results)

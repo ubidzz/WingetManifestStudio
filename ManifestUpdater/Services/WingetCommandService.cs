@@ -56,7 +56,11 @@ internal static class WingetCommandService
 	public static int StartWingetCreateInteractive(string command, string arguments, string workingDirectory)
 		=> StartWingetCreateInteractiveSession(command, arguments, workingDirectory).ProcessId;
 
-	public static InteractiveCommandSession StartWingetCreateInteractiveSession(string command, string arguments, string workingDirectory)
+	public static InteractiveCommandSession StartWingetCreateInteractiveSession(
+		string command,
+		string arguments,
+		string workingDirectory,
+		string? cleanupFolder = null)
 	{
 		string logFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudio", "command-logs");
 		Directory.CreateDirectory(logFolder);
@@ -65,7 +69,13 @@ internal static class WingetCommandService
 		startInfo.Environment["WMS_WINGETCREATE_LOG"] = logPath;
 		using Process process = Process.Start(startInfo)
 			?? throw new InvalidOperationException("Windows could not start WingetCreate in an interactive console.");
-		return new InteractiveCommandSession(process.Id, logPath);
+		return new InteractiveCommandSession(process.Id, logPath, CleanupFolder: cleanupFolder);
+	}
+
+	internal static void CleanupInteractiveCommandSessionArtifacts(InteractiveCommandSession session)
+	{
+		try { if (File.Exists(session.LogPath)) File.Delete(session.LogPath); } catch { }
+		try { ManifestService.DeleteCleanManifestFolder(session.CleanupFolder); } catch { }
 	}
 
 	internal static ProcessStartInfo CreateInteractiveProcessStartInfo(string command, string arguments, string workingDirectory)
@@ -665,7 +675,11 @@ internal static class WingetCommandService
 	}
 }
 
-internal sealed record InteractiveCommandSession(int ProcessId, string LogPath, string? ResultPath = null);
+internal sealed record InteractiveCommandSession(
+	int ProcessId,
+	string LogPath,
+	string? ResultPath = null,
+	string? CleanupFolder = null);
 
 internal sealed record SandboxPowerShellInvocation(
 	IReadOnlyList<string> Arguments,
