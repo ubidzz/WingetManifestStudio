@@ -31,6 +31,8 @@ public sealed class ManifestProject
 	public string ReleaseNotes { get; set; } = string.Empty;
 	public string ReleaseNotesUrl { get; set; } = string.Empty;
 	public string InstallationNotes { get; set; } = string.Empty;
+	public string Agreements { get; set; } = string.Empty;
+	public string Documentations { get; set; } = string.Empty;
 	public string Channel { get; set; } = string.Empty;
 	public string InstallerLocale { get; set; } = string.Empty;
 	public string Platform { get; set; } = string.Empty;
@@ -54,6 +56,19 @@ public sealed class ManifestProject
 	public string FileExtensions { get; set; } = string.Empty;
 	public string UnsupportedOSArchitectures { get; set; } = string.Empty;
 	public string InstallerSuccessCodes { get; set; } = string.Empty;
+	public string PackageDependencies { get; set; } = string.Empty;
+	public string WindowsFeatures { get; set; } = string.Empty;
+	public string Capabilities { get; set; } = string.Empty;
+	public string RestrictedCapabilities { get; set; } = string.Empty;
+	public string Markets { get; set; } = string.Empty;
+	public string ExcludedMarkets { get; set; } = string.Empty;
+	public string ExpectedReturnCodes { get; set; } = string.Empty;
+	public string UnsupportedArguments { get; set; } = string.Empty;
+	public string DefaultInstallLocation { get; set; } = string.Empty;
+	public string InstalledFiles { get; set; } = string.Empty;
+	public string AuthenticationType { get; set; } = string.Empty;
+	public string AuthenticationResource { get; set; } = string.Empty;
+	public string AuthenticationScope { get; set; } = string.Empty;
 	public string PackageFamilyName { get; set; } = string.Empty;
 	public string ReleaseDate { get; set; } = string.Empty;
 	public string InstallerAbortsTerminal { get; set; } = string.Empty;
@@ -99,6 +114,7 @@ public sealed class InstallerArtifact : INotifyPropertyChanged
 	private string signerThumbprint = string.Empty;
 	private string signatureExpiration = string.Empty;
 	private string advancedFieldsYaml = string.Empty;
+	private string analysisSummary = string.Empty;
 
 	public string LocalFile { get => localFile; set => Set(ref localFile, value); }
 	public string InstallerUrl { get => installerUrl; set => Set(ref installerUrl, value); }
@@ -120,6 +136,7 @@ public sealed class InstallerArtifact : INotifyPropertyChanged
 	public string SignerThumbprint { get => signerThumbprint; set => Set(ref signerThumbprint, value); }
 	public string SignatureExpiration { get => signatureExpiration; set => Set(ref signatureExpiration, value); }
 	public string AdvancedFieldsYaml { get => advancedFieldsYaml; set => Set(ref advancedFieldsYaml, value); }
+	public string AnalysisSummary { get => analysisSummary; set => Set(ref analysisSummary, value); }
 
 	public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -151,7 +168,12 @@ public sealed record InstallerInspection(
 	string Publisher,
 	long FileSize,
 	AuthenticodeInspection Signature,
-	string SignatureSha256);
+	string SignatureSha256,
+	string Technology,
+	string SuggestedSilentSwitch,
+	string SuggestedSilentWithProgressSwitch,
+	string SuggestedInstallLocationSwitch,
+	string AnalysisNotes);
 
 public sealed record NestedInstallerFileEntry(
 	string RelativeFilePath,
@@ -174,6 +196,37 @@ public sealed record RepositoryCheckResult(
 	string GitHubUrl,
 	string LatestVersion,
 	string Summary);
+
+public sealed record RepositoryImportResult(
+	string PackageIdentifier,
+	string Version,
+	string ManifestFolder,
+	IReadOnlyList<string> Files,
+	string RepositoryUrl);
+
+public sealed record GitHubReleaseAsset(
+	string Name,
+	string DownloadUrl,
+	long Size,
+	string ContentType);
+
+public sealed record GitHubReleaseImport(
+	string Owner,
+	string Repository,
+	string Tag,
+	string Version,
+	string ReleaseName,
+	string ReleaseNotes,
+	string ReleaseUrl,
+	string RepositoryUrl,
+	string PublisherUrl,
+	string SupportUrl,
+	string License,
+	string LicenseUrl,
+	string Description,
+	string Topics,
+	string ReleaseDate,
+	IReadOnlyList<GitHubReleaseAsset> Assets);
 
 public sealed record CommandResult(int ExitCode, string Output, string Error)
 {

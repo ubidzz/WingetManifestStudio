@@ -33,7 +33,7 @@ public partial class MainForm : Form
 	private StudioComboBox toolCommandBox = null!;
 	private StudioComboBox languageBox = null!;
 	private StudioTextBox toolArgumentsBox = null!;
-	private StudioCheckBox insecureUrlCheck = null!;
+	private StudioToggleSwitch insecureUrlCheck = null!;
 	private Label readinessLabel = null!;
 	private Button reviewNextActionButton = null!;
 	private Label reviewActionTitleLabel = null!;
@@ -363,14 +363,18 @@ public partial class MainForm : Form
 		FlowLayoutPanel content = NewScrollFlow();
 		content.Padding = new Padding(18, 20, 18, 30);
 		content.Controls.Add(CreateHeroCard());
-		content.Controls.Add(CreateWorkflowCard("1", "Choose what you are doing", "Load an existing manifest folder to update a package, or start a new project and choose an empty output folder.",
+		content.Controls.Add(CreateWorkflowCard("1", "Choose how to start", "Create a blank package, load YAML files already on this computer, or enter an existing Winget package ID to download its current manifests into a new working copy.",
 			("Load existing manifests", async (_, _) => await LoadManifestsAsync()),
+			("Import existing Winget package", async (_, _) => await ImportExistingPackageAsync()),
 			("Create a new project", (_, _) => { NewProject(); SelectTab("Package Details"); })));
-		content.Controls.Add(CreateWorkflowCard("2", "Add the release installers", "Choose the local MSI, EXE, MSIX, APPX, ZIP, portable app, or font files that you will upload. The Studio reads those exact files and calculates their SHA-256 hashes. Then enter the public download URL for each file.",
+		content.Controls.Add(CreateWorkflowCard("2", "Fill release information", "Enter package details yourself, or paste a public GitHub release URL. The importer fills only blank fields and asks before downloading supported release assets for hashes and installer inspection.",
+			("Import a GitHub release", async (_, _) => await ImportGitHubReleaseAsync()),
+			("Open Package Details", (_, _) => SelectTab("Package Details"))));
+		content.Controls.Add(CreateWorkflowCard("3", "Add the release installers", "Choose the local MSI, EXE, MSIX, APPX, ZIP, portable app, or font files that you will upload. The Studio reads those exact files and calculates their SHA-256 hashes. Then enter the public download URL for each file.",
 			("Open Installers & Hashes", (_, _) => SelectTab("Installers & Hashes"))));
-		content.Controls.Add(CreateWorkflowCard("3", "Review before anything is changed", "Preview builds all three manifests in memory. Save writes them only after validation and keeps timestamped backups of files that already exist.",
+		content.Controls.Add(CreateWorkflowCard("4", "Review before anything is changed", "Preview builds all three manifests in memory. Save writes them only after validation and keeps timestamped backups of files that already exist.",
 			("Open Preview & Submit", (_, _) => SelectTab("Preview & Submit"))));
-		content.Controls.Add(CreateWorkflowCard("4", "Test in the numbered order, then submit", "Open Test Center and follow its numbered status panel: 1 Safe Preflight, 2 Enable Local Testing once, 3 Test Install Here, and 4 Verify Installed Result. Each step explains the next action and stops before changing the computer without confirmation.",
+		content.Controls.Add(CreateWorkflowCard("5", "Test in the numbered order, then submit", "Open Test Center and follow its numbered status panel: 1 Safe Preflight, 2 Enable Local Testing once, 3 Test Install Here, and 4 Verify Installed Result. Each step explains the next action and stops before changing the computer without confirmation.",
 			("Open Test Center", (_, _) => SelectTab("Test Center")),
 			("Open Official Tools", (_, _) => SelectTab("Official Tool Commands"))));
 		content.Controls.Add(CreateWorkflowCard("?", "Need help?", "Open the built-in beginner guide for field meanings, installer IDs, hashes, validation, and submission.",
@@ -467,7 +471,26 @@ public partial class MainForm : Form
 			Field("SwitchUpgrade", "Upgrade switch"),
 			Field("CustomInstallerSwitch", "Custom switch"),
 			Field("SwitchRepair", "Repair switch")));
-		optionalProjectFieldsPanel.Controls.Add(CreateSection("ALL OTHER SCHEMA FIELDS", "For uncommon nested fields such as dependencies, agreements, documentation, icons, markets, expected return codes, nested files, and installation metadata. These optional boxes accept a YAML Field: value mapping and are checked before previewing.",
+		optionalProjectFieldsPanel.Controls.Add(CreateSection("AGREEMENTS & DOCUMENTATION", "Friendly one-line formats create the nested YAML for you. Use one entry per line; leave the entire box blank when it does not apply.",
+			Field("Agreements", "Agreements", "One per line: label | HTTPS URL | agreement text", multiline: true, width: 520),
+			Field("Documentations", "Documentation links", "One per line: label | HTTPS URL", multiline: true, width: 520)));
+		optionalProjectFieldsPanel.Controls.Add(CreateSection("DEPENDENCIES & AVAILABILITY", "Optional rules for packages that depend on another Winget package or Windows feature, MSIX capabilities, or market restrictions.",
+			Field("PackageDependencies", "Package dependencies", "One per line: Publisher.Application | minimum version", multiline: true, width: 520),
+			Field("WindowsFeatures", "Windows features", "Comma-separated Windows feature names"),
+			Field("Capabilities", "MSIX capabilities", "Comma-separated"),
+			Field("RestrictedCapabilities", "Restricted capabilities", "Comma-separated"),
+			Field("Markets", "Allowed markets", "Comma-separated market codes such as US, CA"),
+			Field("ExcludedMarkets", "Excluded markets", "Comma-separated market codes")));
+		optionalProjectFieldsPanel.Controls.Add(CreateSection("RETURN CODES & INSTALL DETECTION", "Describe uncommon installer results and installed files without writing YAML. These values are optional and official validation checks their schema.",
+			Field("ExpectedReturnCodes", "Expected return codes", "One per line: number | response | optional HTTPS help URL", multiline: true, width: 520),
+			ChoiceField("UnsupportedArguments", "Unsupported Winget arguments", ["log", "location", "log, location"], 300),
+			Field("DefaultInstallLocation", "Default install location", "Example: %ProgramFiles%\\Publisher\\Application", width: 420),
+			Field("InstalledFiles", "Installed files", "One per line: relative path | launch/uninstall/other | optional SHA-256 | optional argument | optional display name", multiline: true, width: 620)));
+		optionalProjectFieldsPanel.Controls.Add(CreateSection("PRIVATE SOURCE AUTHENTICATION", "Only private Entra ID secured sources use these fields. Community repository packages should leave all three blank.",
+			ChoiceField("AuthenticationType", "Authentication type", ["none", "microsoftEntraId", "microsoftEntraIdForAzureBlobStorage"], 340),
+			Field("AuthenticationResource", "Entra resource"),
+			Field("AuthenticationScope", "Entra scope")));
+		optionalProjectFieldsPanel.Controls.Add(CreateSection("YAML ESCAPE HATCH", "Only use these boxes for schema fields that still have no guided control. Existing custom keys remain preserved even when these boxes stay blank.",
 			Field("AdvancedLocaleFieldsYaml", "Additional locale fields", "Optional advanced YAML mapping", multiline: true, width: 520),
 			Field("AdvancedInstallerFieldsYaml", "Additional installer fields", "Optional advanced YAML mapping", multiline: true, width: 520)));
 		optionalProjectFieldsPanel.ClientSizeChanged += (_, _) =>
@@ -614,18 +637,18 @@ public partial class MainForm : Form
 		languageRow.Controls.Add(languageBox);
 		content.Controls.Add(languageRow);
 		content.Controls.Add(CreateInfoStrip("HOW TO USE THIS SOFTWARE", "This guide explains every screen and the information Winget needs. You can read it at any time; the buttons only take you to the screen being described."));
-		content.Controls.Add(CreateWorkflowCard("1", "Start or open a manifest project", "For a first release, choose New Project and select the folder where the three YAML files will be saved. For an update, choose Load Manifests and select the folder containing the existing version, installer, and locale YAML files. Loading never changes them.",
+		content.Controls.Add(CreateWorkflowCard("1", "Start or open a manifest project", "For a first release, choose New Project. For an update, load a local YAML folder or choose Import Existing Winget Package and enter its exact package ID. Repository import downloads the newest manifests into a separate working-copy folder and never overwrites an existing manifest folder.",
 			("Go to Package Details", (_, _) => SelectTab("Package Details"))));
 		content.Controls.Add(CreateWorkflowCard("2", "Enter the package identity", "Package Identifier is the permanent Winget name, normally Publisher.Application. Enter Publisher and Package Name first, then use Suggest Package ID if you want help. Package Version has no leading v. Keep the identifier unchanged for updates.",
 			("Edit Package Identity", (_, _) => SelectTab("Package Details"))));
-		content.Controls.Add(CreateWorkflowCard("3", "Complete the public package information", "Package Name, Publisher, License, and Short Description are required. Add the official website, support and license links when available. Description, tags, release notes, and moniker help people understand and find the application.",
+		content.Controls.Add(CreateWorkflowCard("3", "Complete the public package information", "Package Name, Publisher, License, and Short Description are required. Enter them yourself or use Import a GitHub Release from Start. The importer fills only blank fields and asks before temporarily downloading supported release assets. Optional guided fields create dependencies, agreements, documentation, return codes, market rules, and install-detection YAML without manual YAML editing.",
 			("Edit Package Information", (_, _) => SelectTab("Package Details"))));
 		content.Controls.Add(CreateInfoStrip("INSTALLER FILES AND DOWNLOAD LINKS", "Winget downloads from a public URL, but the Studio uses your matching local release file to calculate the trusted SHA-256 value."));
 		content.Controls.Add(CreateWorkflowCard("4", "Add the exact release file", "Choose Add Release Files for every installer you publish. Select the same MSI, EXE, MSIX, APPX, bundle, ZIP, portable app, or font file that will be uploaded. Use one row for each architecture, scope, or installer variation. Nothing is assumed to be x64.",
 			("Open Installers & Hashes", (_, _) => SelectTab("Installers & Hashes"))));
 		content.Controls.Add(CreateWorkflowCard("5", "Enter its public HTTPS URL", "Paste the direct download URL for each installer—not a web page containing a download button. The URL must remain public and must download the exact local file in that row. GitHub release asset URLs are suitable.",
 			("Enter Download URLs", (_, _) => SelectTab("Installers & Hashes"))));
-		content.Controls.Add(CreateWorkflowCard("6", "Inspect and verify the published installer", "Inspect & Fill Details calculates SHA-256 and detects supported metadata. MSI files can provide identity, architecture, and scope. ZIP files show their nested installer paths for review. Existing package name, publisher, and version entries are never replaced by inspection. After upload, Verify Public URLs proves the public file matches the local SHA-256.",
+		content.Controls.Add(CreateWorkflowCard("6", "Inspect and verify the published installer", "Inspect & Fill Details calculates SHA-256, reports signed or unsigned status, and detects MSI, MSIX, Inno, NSIS, WiX Burn, Squirrel, Velopack, InstallShield, Advanced Installer, and self-extracting EXE clues. Unsigned EXE/MSI files are supported and shown as a warning; MSIX/APPX packages still require their package signature. ZIP files show nested paths. Verify Public URLs proves the published file matches the hash.",
 			("Inspect Installer Files", (_, _) => SelectTab("Installers & Hashes"))));
 		content.Controls.Add(CreateInfoStrip("SPECIAL PACKAGE TYPES", "Portable EXEs may look like normal EXE installers, so choose portable in the row when needed. Font packages use Microsoft's separate fonts manifest root and have stricter submission rules. PWA support can vary by Winget client and repository policy; always keep the official validation and install-test result."));
 		content.Controls.Add(CreateInfoStrip("REVIEW, SAVE, AND PUBLISH", "The preview is your safety check. It creates the proposed YAML in memory without writing to the selected folder."));
@@ -838,6 +861,137 @@ public partial class MainForm : Form
 			fields.GetValueOrDefault("ManifestFolder")?.Text);
 		if (string.IsNullOrWhiteSpace(selectedPath)) return;
 		await LoadManifestFolderAsync(selectedPath);
+	}
+
+	private async Task ImportExistingPackageAsync()
+	{
+		if (uiTestMode)
+		{
+			SetStatus("TEST: Existing Winget package import opened safely without network or file access.");
+			return;
+		}
+		if (isBusy) return;
+		string? identifier = StudioTextPromptDialog.ShowPrompt(
+			this,
+			"Import an existing Winget package",
+			"Enter the exact package ID shown by Winget. The Studio will download the newest manifest set from microsoft/winget-pkgs into a new working copy.",
+			"Winget package ID",
+			"Example: Microsoft.PowerToys",
+			Read("PackageIdentifier"));
+		if (string.IsNullOrWhiteSpace(identifier)) return;
+		string? destination = await PickFolderAsync(
+			"Choose Parent Folder for Imported Manifests",
+			"A new PackageID\\Version working folder will be created here. Existing manifest files will not be overwritten.",
+			fields.GetValueOrDefault("ManifestFolder")?.Text);
+		if (string.IsNullOrWhiteSpace(destination)) return;
+
+		try
+		{
+			SetBusy(true, "Finding the current Winget manifests...");
+			Progress<string> progress = new(SetStatus);
+			RepositoryImportResult imported = await WingetRepositoryService.ImportLatestAsync(
+				identifier, destination, progress, operationCancellation!.Token);
+			ManifestProject loaded = await Task.Run(
+				() => ManifestService.LoadProject(imported.ManifestFolder), operationCancellation.Token);
+			if (!loaded.LoadedFromExistingManifests)
+				throw new InvalidDataException("The downloaded working copy did not contain a complete Winget manifest set.");
+			project = loaded;
+			ApplyProjectToControls();
+			SelectTab("Package Details");
+			SetStatus($"Imported {imported.PackageIdentifier} {imported.Version} into a separate working copy. Change the release version and installer URLs for the new release.");
+		}
+		catch (OperationCanceledException) { SetStatus("Winget package import was cancelled."); }
+		catch (Exception ex) { ShowError("The Winget package could not be imported", ex); }
+		finally { SetBusy(false); }
+	}
+
+	private async Task ImportGitHubReleaseAsync()
+	{
+		if (uiTestMode)
+		{
+			SetStatus("TEST: GitHub release import opened safely without network or file access.");
+			return;
+		}
+		if (isBusy) return;
+		string? releaseUrl = StudioTextPromptDialog.ShowPrompt(
+			this,
+			"Import a GitHub release",
+			"Paste the public URL for the exact release you are packaging. Existing values are kept; the importer fills only blank fields.",
+			"GitHub release URL",
+			"https://github.com/owner/project/releases/tag/v1.2.3",
+			Read("ReleaseNotesUrl"));
+		if (string.IsNullOrWhiteSpace(releaseUrl)) return;
+
+		GitHubReleaseImport release;
+		try
+		{
+			SetBusy(true, "Reading GitHub release information...");
+			release = await GitHubReleaseService.ReadAsync(releaseUrl, operationCancellation!.Token);
+		}
+		catch (OperationCanceledException) { SetStatus("GitHub release import was cancelled."); return; }
+		catch (Exception ex) { ShowError("The GitHub release could not be read", ex); return; }
+		finally { SetBusy(false); }
+
+		IReadOnlyList<GitHubReleaseAsset> selectedAssets;
+		if (release.Assets.Count == 0)
+		{
+			DialogResult answer = MessageBox.Show(this,
+				$"Release: {release.Tag}\r\nRepository: {release.Owner}/{release.Repository}\r\n\r\nNo supported installer assets were found. Import the package and release details only?",
+				"Import GitHub release", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+			if (answer != DialogResult.Yes) return;
+			selectedAssets = [];
+		}
+		else
+		{
+			IReadOnlyList<GitHubReleaseAsset>? selection = GitHubAssetSelectionDialog.SelectAssets(this, release);
+			if (selection is null) return;
+			selectedAssets = selection;
+		}
+
+		ReadProjectFromControls();
+		ApplyGitHubReleaseMetadata(release);
+		List<InstallerArtifact> added = [];
+		foreach (GitHubReleaseAsset asset in selectedAssets)
+		{
+			if (project.Installers.Any(item => item.InstallerUrl.Equals(asset.DownloadUrl, StringComparison.OrdinalIgnoreCase))) continue;
+			InstallerArtifact item = new()
+			{
+				InstallerUrl = asset.DownloadUrl,
+				VerificationStatus = "Imported from GitHub release • waiting for inspection"
+			};
+			project.Installers.Add(item);
+			added.Add(item);
+		}
+		ApplyProjectToControls();
+		foreach (InstallerArtifact item in added)
+			await InspectInstallerAsync(item, allowRemoteDownload: true);
+		SelectTab(added.Count > 0 ? "Installers & Hashes" : "Package Details");
+		SetStatus($"Imported GitHub release {release.Tag}. Filled blank package fields and added {added.Count} new installer row(s); review every value before saving.");
+	}
+
+	private void ApplyGitHubReleaseMetadata(GitHubReleaseImport release)
+	{
+		if (string.IsNullOrWhiteSpace(project.PackageIdentifier))
+		{
+			string owner = CleanIdentifierPart(release.Owner);
+			string repository = CleanIdentifierPart(release.Repository);
+			if (owner.Length > 0 && repository.Length > 0) project.PackageIdentifier = owner + "." + repository;
+		}
+		project.PackageVersion = project.PackageVersion.IfEmpty(release.Version);
+		project.PackageName = project.PackageName.IfEmpty(release.Repository);
+		project.Author = project.Author.IfEmpty(release.Owner);
+		project.PackageUrl = project.PackageUrl.IfEmpty(release.RepositoryUrl);
+		project.PublisherUrl = project.PublisherUrl.IfEmpty(release.PublisherUrl);
+		project.PublisherSupportUrl = project.PublisherSupportUrl.IfEmpty(release.SupportUrl);
+		project.License = project.License.IfEmpty(release.License);
+		project.LicenseUrl = project.LicenseUrl.IfEmpty(release.LicenseUrl);
+		project.ShortDescription = project.ShortDescription.IfEmpty(release.Description);
+		project.Description = project.Description.IfEmpty(release.Description);
+		project.Tags = project.Tags.IfEmpty(release.Topics);
+		project.ReleaseNotes = project.ReleaseNotes.IfEmpty(release.ReleaseNotes);
+		project.ReleaseNotesUrl = project.ReleaseNotesUrl.IfEmpty(release.ReleaseUrl);
+		project.ReleaseDate = project.ReleaseDate.IfEmpty(release.ReleaseDate);
+		project.ProfileName = project.ProfileName == "New package" ? release.Repository + " " + release.Version : project.ProfileName;
 	}
 
 	private async Task LoadManifestFolderAsync(string selectedPath)
@@ -1122,6 +1276,7 @@ public partial class MainForm : Form
 			item.ProductVersion = result.ProductVersion.IfEmpty(item.ProductVersion);
 			item.DisplayName = result.DisplayName.IfEmpty(item.DisplayName);
 			item.Publisher = result.Publisher.IfEmpty(item.Publisher);
+			item.AnalysisSummary = $"{result.Technology}: {result.AnalysisNotes}";
 			item.SignatureSha256 = result.SignatureSha256;
 			ApplySignature(item, result.Signature);
 			if (!string.IsNullOrWhiteSpace(result.SignatureSha256) && !result.Signature.IsSigned)
@@ -1132,6 +1287,17 @@ public partial class MainForm : Form
 				fields["PackageName"].Text = result.DisplayName;
 			if (string.IsNullOrWhiteSpace(Read("Publisher")) && !string.IsNullOrWhiteSpace(result.Publisher))
 				fields["Publisher"].Text = result.Publisher;
+			if (result.InstallerType.Equals("exe", StringComparison.OrdinalIgnoreCase))
+			{
+				if (string.IsNullOrWhiteSpace(Read("SwitchSilent")) && !string.IsNullOrWhiteSpace(result.SuggestedSilentSwitch))
+					fields["SwitchSilent"].Text = result.SuggestedSilentSwitch;
+				if (string.IsNullOrWhiteSpace(Read("SwitchSilentWithProgress")) && !string.IsNullOrWhiteSpace(result.SuggestedSilentWithProgressSwitch))
+					fields["SwitchSilentWithProgress"].Text = result.SuggestedSilentWithProgressSwitch;
+				if (string.IsNullOrWhiteSpace(Read("SwitchInstallLocation")) && !string.IsNullOrWhiteSpace(result.SuggestedInstallLocationSwitch))
+					fields["SwitchInstallLocation"].Text = result.SuggestedInstallLocationSwitch;
+				if (string.IsNullOrWhiteSpace(Read("InstallModes")) && !string.IsNullOrWhiteSpace(result.SuggestedSilentSwitch))
+					fields["InstallModes"].Text = "silent, silentWithProgress";
+			}
 			string zipNote = result.InstallerType.Equals("zip", StringComparison.OrdinalIgnoreCase)
 				? string.IsNullOrWhiteSpace(result.NestedInstallerFiles)
 					? " No supported installer file was found inside the ZIP; enter its contents in the ZIP CONTENTS column."
@@ -1141,7 +1307,7 @@ public partial class MainForm : Form
 				|| !item.InstallerType.Equals(result.InstallerType, StringComparison.OrdinalIgnoreCase))
 				? $" The row kept your choices ({item.Architecture}, {item.InstallerType}); file inspection suggested {result.Architecture}, {result.InstallerType}."
 				: string.Empty;
-			SetStatus($"Inspected {Path.GetFileName(item.LocalFile.IfEmpty(item.InstallerUrl))}: {FormatSize(result.FileSize)}, {item.Architecture}, {item.InstallerType}.{zipNote}{choiceNote}{versionNote}");
+			SetStatus($"Inspected {Path.GetFileName(item.LocalFile.IfEmpty(item.InstallerUrl))}: {FormatSize(result.FileSize)}, {item.Architecture}, {item.InstallerType}, {result.Technology}.{zipNote}{choiceNote}{versionNote}");
 		}
 		catch (OperationCanceledException) { SetStatus("Installer inspection cancelled."); }
 		catch (Exception ex) { ShowError("Installer inspection failed", ex); }
@@ -1398,9 +1564,13 @@ public partial class MainForm : Form
 			SetStatus("Running official local Winget validation in a clean temporary folder...");
 			CommandResult result = await WingetCommandService.ValidateManifestAsync(cleanFolder, operationCancellation!.Token);
 			technicalPreviewText = result.CombinedOutput;
-			if (result.ExitCode == 0)
+			bool validationSucceeded = WingetCommandService.ManifestValidationSucceeded(result);
+			bool hasWarnings = validationSucceeded && result.ExitCode != 0;
+			if (validationSucceeded)
 			{
-				simplePreviewText = "VALIDATION PASSED — NOTHING NEEDS FIXING\r\n\r\n[OK] Microsoft's Winget validator accepted the generated manifests.\r\n[OK] No files were changed during validation.\r\n\r\nNEXT: Open 5 Test Center and run Safe Preflight, then test the installation.";
+				simplePreviewText = hasWarnings
+					? "VALIDATION PASSED WITH WARNINGS\r\n\r\n[OK] Microsoft's Winget validator accepted the generated manifests.\r\n[CHECK] Review the warning in Show technical YAML. Restricted fields may require a verified publisher.\r\n[OK] No files were changed during validation.\r\n\r\nNEXT: Open 5 Test Center and run Safe Preflight, then test the installation."
+					: "VALIDATION PASSED — NOTHING NEEDS FIXING\r\n\r\n[OK] Microsoft's Winget validator accepted the generated manifests.\r\n[OK] No files were changed during validation.\r\n\r\nNEXT: Open 5 Test Center and run Safe Preflight, then test the installation.";
 				SetReviewProgress(ReviewProgress.Validated);
 			}
 			else
@@ -1409,8 +1579,8 @@ public partial class MainForm : Form
 				SetReviewProgress(ReviewProgress.ValidationFailed);
 			}
 			ShowSimplePreview();
-			SetStatus(result.ExitCode == 0
-				? "Official Winget validation passed. Next, open Test Center."
+			SetStatus(validationSucceeded
+				? (hasWarnings ? "Official Winget validation passed with warnings. Review them, then open Test Center." : "Official Winget validation passed. Next, open Test Center.")
 				: "Winget found manifest problems. The Review page now explains what to fix.");
 		}
 		catch (InvalidDataException ex)
@@ -1497,8 +1667,9 @@ public partial class MainForm : Form
 			cleanFolder = ManifestService.CreateCleanManifestFolder(generated);
 			SetStatus("Running official Winget schema validation...");
 			CommandResult validation = await WingetCommandService.ValidateManifestAsync(cleanFolder, operationCancellation!.Token);
-			if (validation.ExitCode != 0) criticalFailure = true;
-			report.AppendLine($"{(validation.ExitCode == 0 ? "PASS" : "FAIL")}  Official winget validate: exit code {validation.ExitCode}.");
+			bool validationSucceeded = WingetCommandService.ManifestValidationSucceeded(validation);
+			if (!validationSucceeded) criticalFailure = true;
+			report.AppendLine($"{(validationSucceeded ? validation.ExitCode == 0 ? "PASS" : "WARN" : "FAIL")}  Official winget validate: exit code {validation.ExitCode}.");
 			if (!string.IsNullOrWhiteSpace(validation.CombinedOutput))
 				report.AppendLine(IndentReport(validation.CombinedOutput));
 
@@ -1516,7 +1687,7 @@ public partial class MainForm : Form
 
 			AuthenticodeInspection applicationSignature = AuthenticodeInspector.Inspect(Environment.ProcessPath ?? Application.ExecutablePath);
 			report.AppendLine($"{(applicationSignature.IsTrusted ? "PASS" : "WARN")}  Studio trust: {applicationSignature.Status}{FormatSigner(applicationSignature)}.");
-			report.AppendLine().AppendLine(validation.ExitCode == 0
+			report.AppendLine().AppendLine(validationSucceeded
 				? "NEXT  Run Test Install Here or Test in Windows Sandbox before submitting."
 				: "STOP  Fix validation failures before any installation test or submission.");
 			latestTestReport = report.ToString();
@@ -2052,7 +2223,7 @@ public partial class MainForm : Form
 		try
 		{
 			CommandResult validation = await WingetCommandService.ValidateManifestAsync(cleanFolder, operationCancellation!.Token);
-			if (validation.ExitCode != 0)
+			if (!WingetCommandService.ManifestValidationSucceeded(validation))
 				throw new InvalidDataException("Official Winget validation failed. Run Safe Preflight and correct the reported fields before testing installation.\r\n\r\n" + validation.CombinedOutput);
 			return cleanFolder;
 		}
@@ -2325,6 +2496,8 @@ public partial class MainForm : Form
 		project.ReleaseNotes = Read("ReleaseNotes");
 		project.ReleaseNotesUrl = Read("ReleaseNotesUrl");
 		project.InstallationNotes = Read("InstallationNotes");
+		project.Agreements = Read("Agreements");
+		project.Documentations = Read("Documentations");
 		project.Channel = Read("Channel");
 		project.InstallerLocale = Read("InstallerLocale");
 		project.Platform = Read("Platform");
@@ -2348,6 +2521,19 @@ public partial class MainForm : Form
 		project.FileExtensions = Read("FileExtensions");
 		project.UnsupportedOSArchitectures = Read("UnsupportedOSArchitectures");
 		project.InstallerSuccessCodes = Read("InstallerSuccessCodes");
+		project.PackageDependencies = Read("PackageDependencies");
+		project.WindowsFeatures = Read("WindowsFeatures");
+		project.Capabilities = Read("Capabilities");
+		project.RestrictedCapabilities = Read("RestrictedCapabilities");
+		project.Markets = Read("Markets");
+		project.ExcludedMarkets = Read("ExcludedMarkets");
+		project.ExpectedReturnCodes = Read("ExpectedReturnCodes");
+		project.UnsupportedArguments = Read("UnsupportedArguments");
+		project.DefaultInstallLocation = Read("DefaultInstallLocation");
+		project.InstalledFiles = Read("InstalledFiles");
+		project.AuthenticationType = Read("AuthenticationType");
+		project.AuthenticationResource = Read("AuthenticationResource");
+		project.AuthenticationScope = Read("AuthenticationScope");
 		project.PackageFamilyName = Read("PackageFamilyName");
 		project.ReleaseDate = Read("ReleaseDate");
 		project.RepairBehavior = Read("RepairBehavior");
@@ -2393,6 +2579,8 @@ public partial class MainForm : Form
 			Write("ReleaseNotes", project.ReleaseNotes);
 			Write("ReleaseNotesUrl", project.ReleaseNotesUrl);
 			Write("InstallationNotes", project.InstallationNotes);
+			Write("Agreements", project.Agreements);
+			Write("Documentations", project.Documentations);
 			Write("Channel", project.Channel);
 			Write("InstallerLocale", project.InstallerLocale);
 			Write("Platform", project.Platform);
@@ -2416,6 +2604,19 @@ public partial class MainForm : Form
 			Write("FileExtensions", project.FileExtensions);
 			Write("UnsupportedOSArchitectures", project.UnsupportedOSArchitectures);
 			Write("InstallerSuccessCodes", project.InstallerSuccessCodes);
+			Write("PackageDependencies", project.PackageDependencies);
+			Write("WindowsFeatures", project.WindowsFeatures);
+			Write("Capabilities", project.Capabilities);
+			Write("RestrictedCapabilities", project.RestrictedCapabilities);
+			Write("Markets", project.Markets);
+			Write("ExcludedMarkets", project.ExcludedMarkets);
+			Write("ExpectedReturnCodes", project.ExpectedReturnCodes);
+			Write("UnsupportedArguments", project.UnsupportedArguments);
+			Write("DefaultInstallLocation", project.DefaultInstallLocation);
+			Write("InstalledFiles", project.InstalledFiles);
+			Write("AuthenticationType", project.AuthenticationType);
+			Write("AuthenticationResource", project.AuthenticationResource);
+			Write("AuthenticationScope", project.AuthenticationScope);
 			Write("PackageFamilyName", project.PackageFamilyName);
 			Write("ReleaseDate", project.ReleaseDate);
 			Write("RepairBehavior", project.RepairBehavior);
@@ -3298,14 +3499,42 @@ public partial class MainForm : Form
 		FlowLayoutPanel row = CreateInlinePanel();
 		row.Padding = new Padding(14, 9, 14, 9);
 		row.Controls.Add(NewInlineLabel("Optional shared settings"));
-		row.Controls.Add(ChoiceField("InstallerType", "Shared installer type", ["exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "zip", "pwa", "portable", "font"], 165));
-		row.Controls.Add(ChoiceField("Scope", "Scope", ["user", "machine"], 125));
-		row.Controls.Add(Field("InstallModes", "Install modes", "Comma-separated", width: 270));
-		row.Controls.Add(ChoiceField("UpgradeBehavior", "Upgrade behavior", ["install", "uninstallPrevious", "deny"], 180));
-		row.Controls.Add(ChoiceField("ElevationRequirement", "Elevation", ["elevationRequired", "elevatesSelf", "elevationProhibited"], 180));
-		insecureUrlCheck = NewCheckBox("Allow HTTP URLs");
-		row.Controls.Add(insecureUrlCheck);
+		row.Controls.Add(ChoiceField("InstallerType", "Shared installer type", ["exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "zip", "pwa", "portable", "font"], 145));
+		row.Controls.Add(ChoiceField("Scope", "Scope", ["user", "machine"], 105));
+		row.Controls.Add(Field("InstallModes", "Install modes", "Comma-separated", width: 220));
+		row.Controls.Add(ChoiceField("UpgradeBehavior", "Upgrade behavior", ["install", "uninstallPrevious", "deny"], 155));
+		row.Controls.Add(ChoiceField("ElevationRequirement", "Elevation", ["elevationRequired", "elevatesSelf", "elevationProhibited"], 170));
+		row.Controls.Add(CreateHttpUrlToggleField());
 		return row;
+	}
+
+	private Control CreateHttpUrlToggleField()
+	{
+		Panel wrapper = new() { Width = 150, Height = 98, Margin = new Padding(6, 8, 4, 8) };
+		Label caption = new()
+		{
+			Text = "Allow HTTP URLs",
+			AutoSize = true,
+			ForeColor = Color.FromArgb(189, 213, 244),
+			Font = new Font("Segoe UI Semibold", 9F),
+			Location = new Point(0, 0)
+		};
+		insecureUrlCheck = NewToggleSwitch();
+		insecureUrlCheck.Location = new Point(0, 24);
+		Label help = new()
+		{
+			Text = "Off is safer. Enable only when HTTPS is unavailable.",
+			Location = new Point(1, 62),
+			Width = 146,
+			Height = 30,
+			AutoEllipsis = true,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 8.25F)
+		};
+		wrapper.Controls.Add(caption);
+		wrapper.Controls.Add(insecureUrlCheck);
+		wrapper.Controls.Add(help);
+		return wrapper;
 	}
 
 	private DataGridView CreateInstallerGrid()
@@ -3322,26 +3551,24 @@ public partial class MainForm : Form
 		}
 		void AddChoice(string property, string title, int width, params string[] choices)
 		{
-			DataGridViewComboBoxColumn column = new()
+			StudioDataGridViewChoiceColumn column = new(choices)
 			{
 				DataPropertyName = property,
 				Name = property,
 				HeaderText = title,
 				Width = width,
-				AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
-				FlatStyle = FlatStyle.Flat,
-				DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton
+				AutoSizeMode = DataGridViewAutoSizeColumnMode.None
 			};
-			column.Items.AddRange(choices.Cast<object>().ToArray());
 			grid.Columns.Add(column);
 		}
 		Add(nameof(InstallerArtifact.LocalFile), "LOCAL RELEASE FILE", 210);
 		Add(nameof(InstallerArtifact.InstallerUrl), "PUBLIC INSTALLER URL", 285);
-		AddChoice(nameof(InstallerArtifact.Architecture), "ARCH", 78, "", "x86", "x64", "arm", "arm64", "neutral");
-		AddChoice(nameof(InstallerArtifact.InstallerType), "TYPE", 100, "", "exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "zip", "pwa", "portable", "font");
-		AddChoice(nameof(InstallerArtifact.Scope), "SCOPE", 84, "", "user", "machine");
+		AddChoice(nameof(InstallerArtifact.Architecture), "ARCH", 88, "x86", "x64", "arm", "arm64", "neutral");
+		AddChoice(nameof(InstallerArtifact.InstallerType), "TYPE", 108, "exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "zip", "pwa", "portable", "font");
+		AddChoice(nameof(InstallerArtifact.Scope), "SCOPE", 96, "user", "machine");
 		Add(nameof(InstallerArtifact.VerificationStatus), "HASH SOURCE / STATUS", 220);
-		AddChoice(nameof(InstallerArtifact.NestedInstallerType), "NESTED TYPE", 118, "", "exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "portable", "font");
+		Add(nameof(InstallerArtifact.AnalysisSummary), "INSTALLER ANALYSIS", 300);
+		AddChoice(nameof(InstallerArtifact.NestedInstallerType), "NESTED TYPE", 132, "exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "portable", "font");
 		Add(nameof(InstallerArtifact.NestedInstallerFiles), "ZIP CONTENTS", 245);
 		Add(nameof(InstallerArtifact.SignatureStatus), "DIGITAL SIGNATURE", 230);
 		Add(nameof(InstallerArtifact.SignerName), "SIGNER", 180);
@@ -3488,6 +3715,8 @@ public partial class MainForm : Form
 			"ReleaseNotesUrl" => "Public HTTPS page for this exact version's release notes",
 			"ReleaseNotes" => "What changed in this exact release",
 			"InstallationNotes" => "Instructions Winget shows after installation",
+			"Agreements" => "One agreement per line using label | HTTPS URL | agreement text",
+			"Documentations" => "One documentation link per line using label | HTTPS URL",
 			"Channel" => "Release channel such as stable, beta, or preview",
 			"InstallerLocale" => "Language built into the installer, such as en-US",
 			"Platform" => "Supported Winget platforms; normally Windows.Desktop",
@@ -3503,6 +3732,19 @@ public partial class MainForm : Form
 			"FileExtensions" => "File extensions registered by the app, separated with commas and without dots",
 			"UnsupportedOSArchitectures" => "Architectures that cannot use this installer, separated with commas",
 			"InstallerSuccessCodes" => "Extra successful installer exit codes, separated with commas",
+			"PackageDependencies" => "One Winget dependency per line using Publisher.Application | minimum version",
+			"WindowsFeatures" => "Windows feature names required by the application, separated with commas",
+			"Capabilities" => "MSIX capabilities required by the package, separated with commas",
+			"RestrictedCapabilities" => "Restricted MSIX capabilities, separated with commas",
+			"Markets" => "Market codes where installation is allowed, separated with commas",
+			"ExcludedMarkets" => "Market codes where installation is blocked, separated with commas",
+			"ExpectedReturnCodes" => "One installer result per line using code | Winget response | optional HTTPS help URL",
+			"UnsupportedArguments" => "Choose log, location, or both only when the installer cannot support those Winget arguments",
+			"DefaultInstallLocation" => "The usual installed application folder; environment variables such as %ProgramFiles% are allowed",
+			"InstalledFiles" => "One installed file per line using relative path | file type | optional SHA-256 | optional argument | optional display name",
+			"AuthenticationType" => "Authentication for a private source; community repository packages leave this blank",
+			"AuthenticationResource" => "Microsoft Entra resource used by a private source",
+			"AuthenticationScope" => "Microsoft Entra scope used by a private source",
 			"PackageFamilyName" => "Microsoft Store or MSIX package family name",
 			"ReleaseDate" => "Public release date in YYYY-MM-DD format",
 			"RepairBehavior" => "How Winget repairs the app: modify, uninstaller, or installer",
@@ -3594,7 +3836,7 @@ public partial class MainForm : Form
 		Label description = new() { Text = "Create a new three-file manifest set or safely update an existing one. Local release files provide the real SHA-256 hash; public URLs tell Winget where users will download them.", Dock = DockStyle.Fill, AutoSize = false, MaximumSize = new Size(780, 0), Margin = Padding.Empty, Padding = new Padding(0, 6, 12, 0), ForeColor = MutedColor, Font = new Font("Segoe UI", 10.5F) };
 		copy.Controls.Add(title, 0, 0);
 		copy.Controls.Add(description, 0, 1);
-		Label safety = new() { Text = "LOCAL-FIRST\n\nGitHub token stays in Windows Credential Manager\nNo manifest overwritten without backup\nNo installer downloaded automatically", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = SuccessColor, Font = new Font("Segoe UI Semibold", 9.5F), BackColor = InputColor, Padding = new Padding(18) };
+		Label safety = new() { Text = "LOCAL-FIRST\n\nGitHub token stays in Windows Credential Manager\nNo manifest overwritten without backup\nNo installer downloaded without confirmation", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = SuccessColor, Font = new Font("Segoe UI Semibold", 9.5F), BackColor = InputColor, Padding = new Padding(18) };
 		hero.Controls.Add(copy, 0, 0);
 		hero.Controls.Add(safety, 1, 0);
 		return hero;
@@ -3726,6 +3968,12 @@ public partial class MainForm : Form
 	private static Label NewInlineLabel(string text) => new() { Text = text, AutoSize = true, ForeColor = MutedColor, Margin = new Padding(6, 11, 8, 0) };
 	private static Label NewHelpLabel(string text, int width) => new() { Text = text, Width = width, AutoSize = true, MaximumSize = new Size(width, 0), ForeColor = MutedColor, Margin = new Padding(8, 12, 8, 8) };
 	private static StudioCheckBox NewCheckBox(string text) => new() { Text = text, ForeColor = MutedColor, Margin = new Padding(14, 27, 8, 0), Width = 170 };
+	private static StudioToggleSwitch NewToggleSwitch() => new()
+	{
+		AccessibleName = "Allow HTTP installer URLs",
+		AccessibleDescription = "Off requires secure HTTPS download URLs. Turn this on only when an installer is available over HTTP.",
+		ForeColor = MutedColor
+	};
 
 	internal async Task<IReadOnlyList<string>> RunUiVerificationAsync()
 	{
@@ -3760,14 +4008,27 @@ public partial class MainForm : Form
 				$"badge right {securityBadge.Right}, minimize left {minimizeButton.Left}");
 			Record(closeButton.Left > minimizeButton.Right, "Minimize and Close buttons are aligned with a visible gap");
 			Size originalSize = Size;
-			Size = MinimumSize;
-			PerformLayout();
-			LayoutHeaderControls();
-			Record(securityBadge.Right + 12 <= minimizeButton.Left && navigationPanel.ClientSize.Width > 0, "Minimum-size layout remains usable");
-			Size = new Size(1600, 1000);
-			PerformLayout();
-			LayoutHeaderControls();
-			Record(closeButton.Right <= headerPanel.ClientSize.Width && workspaceTabs.ClientSize.Width > 0, "Large high-DPI-style layout remains usable");
+			Size[] layoutMatrix =
+			[
+				MinimumSize,
+				new Size(1280, 840),
+				new Size(1536, 864),
+				new Size(1600, 1000),
+				new Size(1920, 1080)
+			];
+			foreach (Size testSize in layoutMatrix)
+			{
+				Size = testSize;
+				PerformLayout();
+				workspaceTabs.PerformLayout();
+				LayoutHeaderControls();
+				bool headerFits = securityBadge.Right + 12 <= minimizeButton.Left && closeButton.Right <= headerPanel.ClientSize.Width;
+				bool navigationFits = navigationButtons.Values.All(button => button.Left >= 0 && button.Right <= navigationPanel.ClientSize.Width);
+				Record(headerFits && navigationFits && workspaceTabs.ClientSize.Width > 0 && workspaceTabs.ClientSize.Height > 0,
+					$"Responsive layout at {testSize.Width}×{testSize.Height}");
+			}
+			Record(DeviceDpi >= 96 && AutoScaleMode is AutoScaleMode.Font or AutoScaleMode.Dpi,
+				$"Windows DPI scaling is active at {DeviceDpi} DPI", $"AutoScaleMode: {AutoScaleMode}");
 			Size = originalSize;
 			PerformLayout();
 			LayoutHeaderControls();
@@ -3878,6 +4139,23 @@ public partial class MainForm : Form
 				Record(checkBox.Checked != original, $"Custom checkbox: {checkBox.Text}");
 				checkBox.Checked = original;
 			}
+			bool originalHttpSetting = insecureUrlCheck.Checked;
+			insecureUrlCheck.Checked = !originalHttpSetting;
+			Record(insecureUrlCheck.Checked != originalHttpSetting, "HTTP URL toggle changes between off and on");
+			insecureUrlCheck.Checked = originalHttpSetting;
+			SelectTab("Installers & Hashes");
+			PerformLayout();
+			Application.DoEvents();
+			Control? toggleWrapper = insecureUrlCheck.Parent;
+			Control? toggleRow = toggleWrapper?.Parent;
+			Record(toggleWrapper is not null && toggleRow is not null &&
+				toggleWrapper.Right <= toggleRow.ClientSize.Width - toggleRow.Padding.Right,
+				"HTTP URL toggle remains fully visible inside the shared-settings row",
+				$"Field right: {toggleWrapper?.Right ?? 0}; row width: {toggleRow?.ClientSize.Width ?? 0}");
+			Label? httpLabel = toggleWrapper?.Controls.OfType<Label>()
+				.FirstOrDefault(label => label.Text == "Allow HTTP URLs");
+			Record(httpLabel is { AutoSize: true } && string.IsNullOrEmpty(insecureUrlCheck.Text) && insecureUrlCheck.Width <= 80,
+				"HTTP URL text is a separate label and only the small switch is clickable");
 
 			ManifestProject importedProject = new()
 			{
@@ -4022,6 +4300,22 @@ public partial class MainForm : Form
 			Record(actionButtons.All(button => !string.IsNullOrWhiteSpace(button.AccessibleName)), "Every action button has an accessible name");
 			Record(readinessLabel.Width > 0 && readinessLabel.Height > 0, "Project readiness guidance is visible");
 			Record(installerGrid.Columns.Count >= 9, "Installer grid contains the complete editing columns");
+			Record(installerGrid.Columns.OfType<StudioDataGridViewChoiceColumn>().Count() == 4,
+				"Installer choices use the same Studio-styled dropdown design as shared Scope");
+			SelectTab("Installers & Hashes");
+			if (installerGrid.Rows.Count > 0 && installerGrid.Columns
+				.OfType<StudioDataGridViewChoiceColumn>()
+				.FirstOrDefault()?.Index is int choiceColumnIndex &&
+				installerGrid.Rows[0].Cells[choiceColumnIndex] is StudioDataGridViewChoiceCell choiceCell)
+			{
+				choiceCell.ExerciseDropDownLifecycle();
+				Record(true, "Installer dropdown can open, close, and reopen without disposing an active popup");
+			}
+			else
+			{
+				Record(false, "Installer dropdown can open, close, and reopen without disposing an active popup", "No installer choice cell was available.");
+			}
+			SelectTab("Start Here");
 			Record(BuildFileDialogFilter([".msi", ".exe"]).Contains("*.msi;*.exe", StringComparison.Ordinal), "Windows file picker filter includes every supported installer type");
 			testOptionalToolsCard.Visible = false;
 			optionalToolsToggleButton.Text = "Show optional tools";

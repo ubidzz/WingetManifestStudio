@@ -17,7 +17,7 @@ internal static class SchemaAwareYaml
 		"PackageIdentifier", "PackageVersion", "PackageLocale", "Publisher", "PublisherUrl",
 		"PublisherSupportUrl", "PrivacyUrl", "Author", "PackageName", "PackageUrl", "License",
 		"LicenseUrl", "Copyright", "CopyrightUrl", "ShortDescription", "Description", "Moniker",
-		"Tags", "ReleaseNotes", "ReleaseNotesUrl", "PurchaseUrl", "InstallationNotes",
+		"Tags", "Agreements", "Documentations", "ReleaseNotes", "ReleaseNotesUrl", "PurchaseUrl", "InstallationNotes",
 		"ManifestType", "ManifestVersion"
 	};
 	private static IReadOnlyList<string> ManagedInstallerFields => new string[]
@@ -25,10 +25,11 @@ internal static class SchemaAwareYaml
 		"PackageIdentifier", "PackageVersion", "Channel", "InstallerLocale", "Platform",
 		"MinimumOSVersion", "InstallerType", "NestedInstallerType", "NestedInstallerFiles", "Scope", "InstallModes",
 		"InstallerSwitches", "InstallerSuccessCodes", "UpgradeBehavior", "Commands", "Protocols",
-		"FileExtensions", "PackageFamilyName", "UnsupportedOSArchitectures", "ElevationRequirement",
+		"FileExtensions", "Dependencies", "PackageFamilyName", "Capabilities", "RestrictedCapabilities",
+		"UnsupportedOSArchitectures", "Markets", "ExcludedMarkets", "ExpectedReturnCodes", "UnsupportedArguments", "ElevationRequirement",
 		"InstallerAbortsTerminal", "ReleaseDate", "InstallLocationRequired", "RequireExplicitUpgrade",
 		"DisplayInstallWarnings", "DownloadCommandProhibited", "RepairBehavior",
-		"ArchiveBinariesDependOnPath", "Installers", "ManifestType", "ManifestVersion"
+		"ArchiveBinariesDependOnPath", "InstallationMetadata", "Authentication", "Installers", "ManifestType", "ManifestVersion"
 	};
 	private static IReadOnlyList<string> ManagedInstallerNodeFields => new string[]
 	{
@@ -75,6 +76,8 @@ internal static class SchemaAwareYaml
 			ReleaseNotes = Value(localeRoot, "ReleaseNotes"),
 			ReleaseNotesUrl = Value(localeRoot, "ReleaseNotesUrl"),
 			InstallationNotes = Value(localeRoot, "InstallationNotes"),
+			Agreements = JoinAgreements(localeRoot),
+			Documentations = JoinDocumentations(localeRoot),
 			Channel = Value(installerRoot, "Channel"),
 			InstallerLocale = Value(installerRoot, "InstallerLocale"),
 			Platform = JoinList(installerRoot, "Platform"),
@@ -90,6 +93,19 @@ internal static class SchemaAwareYaml
 			FileExtensions = JoinList(installerRoot, "FileExtensions"),
 			UnsupportedOSArchitectures = JoinList(installerRoot, "UnsupportedOSArchitectures"),
 			InstallerSuccessCodes = JoinList(installerRoot, "InstallerSuccessCodes"),
+			PackageDependencies = JoinPackageDependencies(installerRoot),
+			WindowsFeatures = JoinList(Mapping(installerRoot, "Dependencies") ?? new YamlMappingNode(), "WindowsFeatures"),
+			Capabilities = JoinList(installerRoot, "Capabilities"),
+			RestrictedCapabilities = JoinList(installerRoot, "RestrictedCapabilities"),
+			Markets = JoinList(installerRoot, "Markets"),
+			ExcludedMarkets = JoinList(installerRoot, "ExcludedMarkets"),
+			ExpectedReturnCodes = JoinExpectedReturnCodes(installerRoot),
+			UnsupportedArguments = JoinUnsupportedArguments(installerRoot),
+			DefaultInstallLocation = Value(Mapping(installerRoot, "InstallationMetadata") ?? new YamlMappingNode(), "DefaultInstallLocation"),
+			InstalledFiles = JoinInstalledFiles(installerRoot),
+			AuthenticationType = Value(Mapping(installerRoot, "Authentication") ?? new YamlMappingNode(), "AuthenticationType"),
+			AuthenticationResource = Value(Mapping(Mapping(installerRoot, "Authentication") ?? new YamlMappingNode(), "MicrosoftEntraIdAuthenticationInfo") ?? new YamlMappingNode(), "Resource"),
+			AuthenticationScope = Value(Mapping(Mapping(installerRoot, "Authentication") ?? new YamlMappingNode(), "MicrosoftEntraIdAuthenticationInfo") ?? new YamlMappingNode(), "Scope"),
 			PackageFamilyName = Value(installerRoot, "PackageFamilyName"),
 			ReleaseDate = Value(installerRoot, "ReleaseDate"),
 			InstallerAbortsTerminal = Value(installerRoot, "InstallerAbortsTerminal"),
@@ -242,6 +258,7 @@ internal static class SchemaAwareYaml
 	public static IReadOnlyList<string> ValidateAdvancedFields(ManifestProject project)
 	{
 		List<string> errors = [];
+		ValidateGuidedFields(project, errors);
 		if (!string.IsNullOrWhiteSpace(project.AdvancedLocaleFieldsYaml))
 			ValidateAdvancedMapping(project.AdvancedLocaleFieldsYaml, ManagedLocaleFields, "Additional locale fields", errors);
 		if (!string.IsNullOrWhiteSpace(project.AdvancedInstallerFieldsYaml))
@@ -285,6 +302,8 @@ internal static class SchemaAwareYaml
 		SetOptionalScalar(root, "ReleaseNotesUrl", project.ReleaseNotesUrl);
 		SetOptionalScalar(root, "PurchaseUrl", project.PurchaseUrl);
 		SetOptionalScalar(root, "InstallationNotes", project.InstallationNotes, ScalarStyle.Literal);
+		SetAgreements(root, project.Agreements);
+		SetDocumentations(root, project.Documentations);
 		if (!string.IsNullOrWhiteSpace(project.AdvancedLocaleFieldsYaml))
 			MergeAdvancedFields(root, project.AdvancedLocaleFieldsYaml, ManagedLocaleFields, "additional locale fields");
 		SetRequiredScalar(root, "ManifestType", "defaultLocale");
@@ -310,6 +329,15 @@ internal static class SchemaAwareYaml
 		SetList(root, "FileExtensions", Split(project.FileExtensions));
 		SetList(root, "UnsupportedOSArchitectures", Split(project.UnsupportedOSArchitectures));
 		SetIntegerList(root, "InstallerSuccessCodes", Split(project.InstallerSuccessCodes));
+		SetDependencies(root, project.PackageDependencies, project.WindowsFeatures);
+		SetList(root, "Capabilities", Split(project.Capabilities));
+		SetList(root, "RestrictedCapabilities", Split(project.RestrictedCapabilities));
+		SetList(root, "Markets", Split(project.Markets));
+		SetList(root, "ExcludedMarkets", Split(project.ExcludedMarkets));
+		SetExpectedReturnCodes(root, project.ExpectedReturnCodes);
+		SetUnsupportedArguments(root, project.UnsupportedArguments);
+		SetInstallationMetadata(root, project.DefaultInstallLocation, project.InstalledFiles);
+		SetAuthentication(root, project.AuthenticationType, project.AuthenticationResource, project.AuthenticationScope);
 		SetOptionalScalar(root, "PackageFamilyName", project.PackageFamilyName);
 		SetOptionalScalar(root, "ElevationRequirement", project.ElevationRequirement);
 		SetOptionalScalar(root, "InstallerAbortsTerminal", project.InstallerAbortsTerminal);
@@ -774,6 +802,229 @@ internal static class SchemaAwareYaml
 			string alias = Value(item, "PortableCommandAlias");
 			return string.IsNullOrWhiteSpace(alias) ? path : path + " | " + alias;
 		}).Where(item => !string.IsNullOrWhiteSpace(item)));
+	}
+
+	private static void ValidateGuidedFields(ManifestProject project, ICollection<string> errors)
+	{
+		try
+		{
+			YamlMappingNode locale = new();
+			SetAgreements(locale, project.Agreements);
+			SetDocumentations(locale, project.Documentations);
+			YamlMappingNode installer = new();
+			SetDependencies(installer, project.PackageDependencies, project.WindowsFeatures);
+			SetExpectedReturnCodes(installer, project.ExpectedReturnCodes);
+			SetUnsupportedArguments(installer, project.UnsupportedArguments);
+			SetInstallationMetadata(installer, project.DefaultInstallLocation, project.InstalledFiles);
+			SetAuthentication(installer, project.AuthenticationType, project.AuthenticationResource, project.AuthenticationScope);
+		}
+		catch (InvalidDataException ex)
+		{
+			errors.Add(ex.Message);
+		}
+	}
+
+	private static void SetAgreements(YamlMappingNode root, string value)
+	{
+		string[] lines = Lines(value);
+		if (lines.Length == 0) { Remove(root, "Agreements"); return; }
+		YamlSequenceNode sequence = new();
+		foreach (string line in lines)
+		{
+			string[] parts = line.Split('|', 3, StringSplitOptions.TrimEntries);
+			if (parts.All(string.IsNullOrWhiteSpace)) continue;
+			YamlMappingNode item = new();
+			SetOptionalScalar(item, "AgreementLabel", parts.ElementAtOrDefault(0) ?? string.Empty);
+			string url = parts.ElementAtOrDefault(1) ?? string.Empty;
+			ValidateGuidedUrl(url, "Agreement URL");
+			SetOptionalScalar(item, "AgreementUrl", url);
+			SetOptionalScalar(item, "Agreement", parts.ElementAtOrDefault(2) ?? string.Empty, ScalarStyle.Literal);
+			sequence.Add(item);
+		}
+		if (sequence.Children.Count == 0) Remove(root, "Agreements"); else SetNode(root, "Agreements", sequence);
+	}
+
+	private static string JoinAgreements(YamlMappingNode root) => JoinMappingLines(root, "Agreements", item =>
+		JoinPipe(Value(item, "AgreementLabel"), Value(item, "AgreementUrl"), Value(item, "Agreement")));
+
+	private static void SetDocumentations(YamlMappingNode root, string value)
+	{
+		string[] lines = Lines(value);
+		if (lines.Length == 0) { Remove(root, "Documentations"); return; }
+		YamlSequenceNode sequence = new();
+		foreach (string line in lines)
+		{
+			string[] parts = line.Split('|', 2, StringSplitOptions.TrimEntries);
+			string label = parts.ElementAtOrDefault(0) ?? string.Empty;
+			string url = parts.ElementAtOrDefault(1) ?? string.Empty;
+			if (url.Length == 0) throw new InvalidDataException("Documentation entries use Label | HTTPS URL, one entry per line.");
+			ValidateGuidedUrl(url, "Documentation URL");
+			YamlMappingNode item = new();
+			SetOptionalScalar(item, "DocumentLabel", label);
+			SetRequiredScalar(item, "DocumentUrl", url);
+			sequence.Add(item);
+		}
+		SetNode(root, "Documentations", sequence);
+	}
+
+	private static string JoinDocumentations(YamlMappingNode root) => JoinMappingLines(root, "Documentations", item =>
+		JoinPipe(Value(item, "DocumentLabel"), Value(item, "DocumentUrl")));
+
+	private static void SetDependencies(YamlMappingNode root, string packageDependencies, string windowsFeatures)
+	{
+		YamlMappingNode dependencies = Mapping(root, "Dependencies") ?? new YamlMappingNode();
+		string[] packageLines = Lines(packageDependencies);
+		if (packageLines.Length == 0) Remove(dependencies, "PackageDependencies");
+		else
+		{
+			YamlSequenceNode packages = new();
+			foreach (string line in packageLines)
+			{
+				string[] parts = line.Split('|', 2, StringSplitOptions.TrimEntries);
+				string identifier = parts.ElementAtOrDefault(0) ?? string.Empty;
+				if (identifier.Length == 0 || !identifier.Contains('.'))
+					throw new InvalidDataException("Package dependencies use Publisher.Application | minimum version, one dependency per line.");
+				YamlMappingNode item = new();
+				SetRequiredScalar(item, "PackageIdentifier", identifier);
+				SetOptionalScalar(item, "MinimumVersion", parts.ElementAtOrDefault(1) ?? string.Empty);
+				packages.Add(item);
+			}
+			SetNode(dependencies, "PackageDependencies", packages);
+		}
+		SetList(dependencies, "WindowsFeatures", Split(windowsFeatures));
+		if (dependencies.Children.Count == 0) Remove(root, "Dependencies"); else SetNode(root, "Dependencies", dependencies);
+	}
+
+	private static string JoinPackageDependencies(YamlMappingNode root)
+	{
+		YamlMappingNode? dependencies = Mapping(root, "Dependencies");
+		if (dependencies is null) return string.Empty;
+		return JoinMappingLines(dependencies, "PackageDependencies", item =>
+			JoinPipe(Value(item, "PackageIdentifier"), Value(item, "MinimumVersion")));
+	}
+
+	private static void SetExpectedReturnCodes(YamlMappingNode root, string value)
+	{
+		string[] lines = Lines(value);
+		if (lines.Length == 0) { Remove(root, "ExpectedReturnCodes"); return; }
+		YamlSequenceNode sequence = new();
+		foreach (string line in lines)
+		{
+			string[] parts = line.Split('|', 3, StringSplitOptions.TrimEntries);
+			string code = parts.ElementAtOrDefault(0) ?? string.Empty;
+			if (!long.TryParse(code, out _))
+				throw new InvalidDataException("Expected return codes use number | response | optional HTTPS help URL, one code per line.");
+			string url = parts.ElementAtOrDefault(2) ?? string.Empty;
+			ValidateGuidedUrl(url, "Return response URL");
+			YamlMappingNode item = new();
+			SetRequiredScalar(item, "InstallerReturnCode", code);
+			SetOptionalScalar(item, "ReturnResponse", parts.ElementAtOrDefault(1) ?? string.Empty);
+			SetOptionalScalar(item, "ReturnResponseUrl", url);
+			sequence.Add(item);
+		}
+		SetNode(root, "ExpectedReturnCodes", sequence);
+	}
+
+	private static string JoinExpectedReturnCodes(YamlMappingNode root) => JoinMappingLines(root, "ExpectedReturnCodes", item =>
+		JoinPipe(Value(item, "InstallerReturnCode"), Value(item, "ReturnResponse"), Value(item, "ReturnResponseUrl")));
+
+	private static void SetUnsupportedArguments(YamlMappingNode root, string value)
+	{
+		string[] values = Split(value);
+		foreach (string item in values)
+			if (item is not ("log" or "location"))
+				throw new InvalidDataException("Unsupported arguments can contain only log and location.");
+		SetList(root, "UnsupportedArguments", values);
+	}
+
+	private static string JoinUnsupportedArguments(YamlMappingNode root)
+	{
+		YamlSequenceNode? sequence = Sequence(root, "UnsupportedArguments");
+		if (sequence is null) return string.Empty;
+		return string.Join(", ", sequence.Children.Select(item => item switch
+		{
+			YamlScalarNode scalar => scalar.Value,
+			YamlMappingNode mapping => Value(mapping, "UnsupportedArgument"),
+			_ => string.Empty
+		}).Where(value => !string.IsNullOrWhiteSpace(value)));
+	}
+
+	private static void SetInstallationMetadata(YamlMappingNode root, string defaultLocation, string installedFiles)
+	{
+		YamlMappingNode metadata = Mapping(root, "InstallationMetadata") ?? new YamlMappingNode();
+		SetOptionalScalar(metadata, "DefaultInstallLocation", defaultLocation);
+		string[] lines = Lines(installedFiles);
+		if (lines.Length == 0) Remove(metadata, "Files");
+		else
+		{
+			YamlSequenceNode files = new();
+			foreach (string line in lines)
+			{
+				string[] parts = line.Split('|', 5, StringSplitOptions.TrimEntries);
+				string path = parts.ElementAtOrDefault(0) ?? string.Empty;
+				if (path.Length == 0) throw new InvalidDataException("Installed file entries must start with a path relative to the default install folder.");
+				string fileType = parts.ElementAtOrDefault(1) ?? string.Empty;
+				if (fileType.Length > 0 && fileType is not ("launch" or "uninstall" or "other"))
+					throw new InvalidDataException("Installed file type must be launch, uninstall, or other.");
+				string sha = parts.ElementAtOrDefault(2) ?? string.Empty;
+				if (sha.Length > 0 && (sha.Length != 64 || sha.Any(character => !Uri.IsHexDigit(character))))
+					throw new InvalidDataException("An installed-file SHA-256 must contain exactly 64 hexadecimal characters.");
+				YamlMappingNode item = new();
+				SetRequiredScalar(item, "RelativeFilePath", path.Replace('/', '\\'));
+				SetOptionalScalar(item, "FileType", fileType);
+				SetOptionalScalar(item, "FileSha256", sha.ToUpperInvariant());
+				SetOptionalScalar(item, "InvocationParameter", parts.ElementAtOrDefault(3) ?? string.Empty);
+				SetOptionalScalar(item, "DisplayName", parts.ElementAtOrDefault(4) ?? string.Empty);
+				files.Add(item);
+			}
+			SetNode(metadata, "Files", files);
+		}
+		if (metadata.Children.Count == 0) Remove(root, "InstallationMetadata"); else SetNode(root, "InstallationMetadata", metadata);
+	}
+
+	private static string JoinInstalledFiles(YamlMappingNode root)
+	{
+		YamlMappingNode? metadata = Mapping(root, "InstallationMetadata");
+		if (metadata is null) return string.Empty;
+		return JoinMappingLines(metadata, "Files", item => JoinPipe(
+			Value(item, "RelativeFilePath"), Value(item, "FileType"), Value(item, "FileSha256"),
+			Value(item, "InvocationParameter"), Value(item, "DisplayName")));
+	}
+
+	private static void SetAuthentication(YamlMappingNode root, string type, string resource, string scope)
+	{
+		if (string.IsNullOrWhiteSpace(type) && string.IsNullOrWhiteSpace(resource) && string.IsNullOrWhiteSpace(scope))
+		{
+			Remove(root, "Authentication");
+			return;
+		}
+		if (string.IsNullOrWhiteSpace(type)) throw new InvalidDataException("Choose an authentication type when an Entra resource or scope is provided.");
+		YamlMappingNode authentication = Mapping(root, "Authentication") ?? new YamlMappingNode();
+		SetRequiredScalar(authentication, "AuthenticationType", type);
+		YamlMappingNode info = Mapping(authentication, "MicrosoftEntraIdAuthenticationInfo") ?? new YamlMappingNode();
+		SetOptionalScalar(info, "Resource", resource);
+		SetOptionalScalar(info, "Scope", scope);
+		if (info.Children.Count == 0) Remove(authentication, "MicrosoftEntraIdAuthenticationInfo");
+		else SetNode(authentication, "MicrosoftEntraIdAuthenticationInfo", info);
+		SetNode(root, "Authentication", authentication);
+	}
+
+	private static string JoinMappingLines(YamlMappingNode root, string key, Func<YamlMappingNode, string> formatter)
+	{
+		YamlSequenceNode? sequence = Sequence(root, key);
+		return sequence is null ? string.Empty : string.Join(Environment.NewLine,
+			sequence.Children.OfType<YamlMappingNode>().Select(formatter).Where(value => !string.IsNullOrWhiteSpace(value)));
+	}
+
+	private static string JoinPipe(params string[] values) => string.Join(" | ", values).TrimEnd(' ', '|');
+	private static string[] Lines(string value) => (value ?? string.Empty)
+		.Split(['\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+	private static void ValidateGuidedUrl(string value, string label)
+	{
+		if (string.IsNullOrWhiteSpace(value)) return;
+		if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) || uri.Scheme is not ("https" or "http"))
+			throw new InvalidDataException(label + " must be a complete HTTP or HTTPS URL.");
 	}
 
 	private static void SetNode(YamlMappingNode mapping, string key, YamlNode value)

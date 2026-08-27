@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Text;
 using YamlDotNet.RepresentationModel;
 
 namespace ManifestUpdater;
@@ -20,6 +21,7 @@ internal static class SelfTestRunner
 			TestOptionalRootPreservation(root, results);
 			TestZipNestedInstallerFiles(root, results);
 			TestAdvancedSchemaFields(root, results);
+			TestGuidedSchemaRoundTrip(root, results);
 			TestSpecialPackageGuidance(root, results);
 			TestCleanValidationFolder(root, results);
 			TestBeginnerValidation(results);
@@ -29,12 +31,19 @@ internal static class SelfTestRunner
 			TestTestingEnvironmentChecks(results);
 			TestInstalledVerificationMatching(results);
 			TestRepositoryPathAndLocalization(results);
+			TestGitHubReleaseParsing(results);
 			TestProfileRoundTrip(root, results);
 			await TestInstallerInspectionAsync(results);
+			await TestInstallerTechnologyDetectionAsync(root, results);
+			await TestRealInstallerCorpusAsync(root, results);
 			await TestFontInspectionAsync(root, results);
 			await TestZipInspectionAsync(root, results);
 			await TestWingetHealthDiagnosticAsync(results);
 			TestAuthenticodeInspection(root, results);
+			if (args.Any(argument => string.Equals(argument, "--network-tests", StringComparison.OrdinalIgnoreCase)))
+				await TestPublicImportServicesAsync(root, results);
+			if (args.Any(argument => string.Equals(argument, "--official-schema-tests", StringComparison.OrdinalIgnoreCase)))
+				await TestOfficialGuidedSchemaAsync(root, results);
 			int installerIndex = Array.FindIndex(args, argument => string.Equals(argument, "--verify-installer", StringComparison.OrdinalIgnoreCase));
 			if (installerIndex >= 0 && installerIndex + 1 < args.Length)
 				await TestRealInstallerAsync(args[installerIndex + 1], results);
@@ -172,17 +181,49 @@ ManifestVersion: 1.12.0
 		project.ReleaseDate = "2026-08-26";
 		project.Protocols = "sample, sample-secure";
 		project.SwitchSilent = "/quiet";
-		project.AdvancedLocaleFieldsYaml = "Agreements:\n  - AgreementLabel: Terms\n    AgreementUrl: https://example.com/terms\n    Agreement: Read the terms";
-		project.AdvancedInstallerFieldsYaml = "Dependencies:\n  WindowsFeatures:\n    - NetFx3";
+		project.Agreements = "Terms | https://example.com/terms | Read the terms";
+		project.WindowsFeatures = "NetFx3";
+		project.AdvancedLocaleFieldsYaml = "CustomLocaleField: KeepLocale";
+		project.AdvancedInstallerFieldsYaml = "CustomInstallerField: KeepInstaller";
 		ManifestGenerationResult generated = ManifestService.Generate(project);
 		string locale = generated.Files.Single(pair => pair.Key.Contains(".locale.", StringComparison.OrdinalIgnoreCase)).Value;
 		string installer = generated.Files.Single(pair => pair.Key.Contains(".installer.", StringComparison.OrdinalIgnoreCase)).Value;
-		Assert(locale.Contains("PrivacyUrl:", StringComparison.Ordinal) && locale.Contains("Agreements:", StringComparison.Ordinal), "Guided and advanced locale fields must be generated.");
-		Assert(installer.Contains("Protocols:", StringComparison.Ordinal) && installer.Contains("InstallerSwitches:", StringComparison.Ordinal) && installer.Contains("Dependencies:", StringComparison.Ordinal),
+		Assert(locale.Contains("PrivacyUrl:", StringComparison.Ordinal) && locale.Contains("Agreements:", StringComparison.Ordinal) && locale.Contains("CustomLocaleField:", StringComparison.Ordinal), "Guided and advanced locale fields must be generated.");
+		Assert(installer.Contains("Protocols:", StringComparison.Ordinal) && installer.Contains("InstallerSwitches:", StringComparison.Ordinal) && installer.Contains("Dependencies:", StringComparison.Ordinal) && installer.Contains("CustomInstallerField:", StringComparison.Ordinal),
 			"Guided and advanced installer fields must be generated.");
 		project.AdvancedInstallerFieldsYaml = "Dependencies: [";
 		Assert(ManifestService.Validate(project).Any(error => error.Contains("Additional installer fields", StringComparison.OrdinalIgnoreCase)), "Invalid advanced YAML must be caught before preview or save.");
 		results.Add("PASS: current-schema guided fields and validated advanced field coverage.");
+	}
+
+	private static void TestGuidedSchemaRoundTrip(string root, List<string> results)
+	{
+		string folder = Path.Combine(root, "guided-schema");
+		ManifestProject project = SampleProject(folder);
+		project.Agreements = "Terms | https://example.com/terms | Read before installing";
+		project.Documentations = "User guide | https://example.com/docs";
+		project.PackageDependencies = "Contoso.Runtime | 2.0.0";
+		project.WindowsFeatures = "NetFx3, Containers";
+		project.Capabilities = "internetClient";
+		project.RestrictedCapabilities = "runFullTrust";
+		project.Markets = "US, CA";
+		project.ExcludedMarkets = "AQ";
+		project.ExpectedReturnCodes = "1603 | contactSupport | https://example.com/support";
+		project.UnsupportedArguments = "log, location";
+		project.DefaultInstallLocation = "%ProgramFiles%\\Contoso\\Sample";
+		project.InstalledFiles = "Sample.exe | launch | " + new string('A', 64) + " | --safe | Sample";
+		ManifestGenerationResult generated = ManifestService.Generate(project);
+		ManifestService.Save(project, generated);
+		ManifestProject loaded = ManifestService.LoadProject(folder);
+		Assert(loaded.Agreements.Contains("https://example.com/terms", StringComparison.Ordinal)
+			&& loaded.Documentations.Contains("User guide", StringComparison.Ordinal)
+			&& loaded.PackageDependencies.Contains("Contoso.Runtime", StringComparison.Ordinal)
+			&& loaded.WindowsFeatures.Contains("Containers", StringComparison.Ordinal)
+			&& loaded.ExpectedReturnCodes.Contains("1603", StringComparison.Ordinal)
+			&& loaded.InstalledFiles.Contains("Sample.exe", StringComparison.Ordinal),
+			"Guided uncommon schema fields must survive save and reload without raw YAML editing.");
+		Assert(ManifestService.Validate(loaded).Count == 0, "Guided uncommon schema fields must pass Studio validation.");
+		results.Add("PASS: guided uncommon Winget schema fields save and reload structurally.");
 	}
 
 	private static void TestOptionalRootPreservation(string root, List<string> results)
@@ -530,6 +571,9 @@ ManifestVersion: 1.12.0
 		Assert(WingetCommandService.RequiresInteractiveConsole("update", "--interactive Contoso.Sample"), "Interactive updates require a console.");
 		Assert(!WingetCommandService.RequiresInteractiveConsole("update", "--version 2.0 Contoso.Sample"), "Non-interactive updates should keep captured output in the Studio.");
 		Assert(!WingetCommandService.RequiresInteractiveConsole("show", "Contoso.Sample"), "Show should keep captured output in the Studio.");
+		Assert(WingetCommandService.ManifestValidationSucceeded(new CommandResult(1, "Manifest validation succeeded with warnings.", "Manifest Warning: restricted field"))
+			&& !WingetCommandService.ManifestValidationSucceeded(new CommandResult(1, "Manifest validation failed.", "Schema error")),
+			"Official validation warnings must remain reviewable without being mistaken for schema failures.");
 		System.Diagnostics.ProcessStartInfo tokenStartInfo = WingetCommandService.CreateInteractiveProcessStartInfo("token", "--store", Environment.CurrentDirectory);
 		Assert(string.Equals(tokenStartInfo.FileName, "powershell.exe", StringComparison.OrdinalIgnoreCase), "Interactive commands must use the persistent console host.");
 		Assert(!tokenStartInfo.UseShellExecute && !tokenStartInfo.CreateNoWindow, "The WingetCreate sign-in console must remain visible and interactive.");
@@ -547,6 +591,20 @@ ManifestVersion: 1.12.0
 		results.Add("PASS: WingetCreate token status can be checked without reading token data.");
 	}
 
+	private static void TestGitHubReleaseParsing(List<string> results)
+	{
+		(string owner, string repository, string tag, bool latest) = GitHubReleaseService.ParseReleaseUrl(
+			"https://github.com/AnyPublisher/AnyApplication/releases/tag/v2.4.1");
+		Assert(owner == "AnyPublisher" && repository == "AnyApplication" && tag == "v2.4.1" && !latest,
+			"GitHub release import must parse arbitrary owner, repository, and tag values.");
+		(_, _, _, bool latestPage) = GitHubReleaseService.ParseReleaseUrl(
+			"https://github.com/AnotherPublisher/DifferentTool/releases/latest");
+		Assert(latestPage && GitHubReleaseService.IsSupportedInstallerAsset("DifferentTool-arm64.msixbundle")
+			&& !GitHubReleaseService.IsSupportedInstallerAsset("checksums.txt"),
+			"GitHub release import must support latest-release URLs and ignore non-installer assets.");
+		results.Add("PASS: dynamic GitHub release URL and asset parsing.");
+	}
+
 	private static async Task TestInstallerInspectionAsync(List<string> results)
 	{
 		string publishedExecutable = Path.Combine(AppContext.BaseDirectory, "WingetManifestStudio.exe");
@@ -555,8 +613,98 @@ ManifestVersion: 1.12.0
 			: Environment.ProcessPath ?? throw new InvalidOperationException("The self-test executable path is unavailable.");
 		InstallerInspection inspection = await InstallerInspector.InspectAsync(executable, string.Empty);
 		Assert(inspection.Sha256.Length == 64, "Installer inspection must calculate SHA-256.");
-		Assert(inspection.InstallerType is "exe" or "inno" or "nullsoft", "An executable must be identified as a supported EXE installer type.");
-		results.Add("PASS: local installer inspection and hashing.");
+		Assert(inspection.InstallerType is "exe" or "inno" or "nullsoft" or "burn", "An executable must be identified as a supported EXE installer type.");
+		Assert(inspection.Technology.Length > 0 && inspection.AnalysisNotes.Length > 0, "Executable inspection must explain the detected technology and safe next step.");
+		results.Add("PASS: deep local executable inspection and hashing.");
+	}
+
+	private static async Task TestRealInstallerCorpusAsync(string root, List<string> results)
+	{
+		string executable = Environment.ProcessPath ?? throw new InvalidOperationException("The running executable path is unavailable.");
+		InstallerInspection application = await InstallerInspector.InspectAsync(executable, string.Empty);
+		Assert(application.Sha256.Length == 64 && application.Technology.Length > 0,
+			"The real application executable must pass hashing and installer-technology analysis.");
+
+		string archivePath = Path.Combine(root, "real-installer-corpus.zip");
+		using (ZipArchive archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+			archive.CreateEntryFromFile(executable, "bin/" + Path.GetFileName(executable), CompressionLevel.NoCompression);
+		InstallerInspection archiveInspection = await InstallerInspector.InspectAsync(archivePath, string.Empty);
+		Assert(archiveInspection.InstallerType == "zip" && archiveInspection.NestedInstallerFiles.Contains(Path.GetFileName(executable), StringComparison.OrdinalIgnoreCase),
+			"A ZIP containing a real executable must be analyzed as a nested installer package.");
+
+		string signedSystemExecutable = Path.Combine(Environment.SystemDirectory, "notepad.exe");
+		if (File.Exists(signedSystemExecutable))
+		{
+			InstallerInspection signed = await InstallerInspector.InspectAsync(signedSystemExecutable, string.Empty);
+			Assert(signed.Signature.Status.Length > 0, "A real Windows executable must produce a completed signed-or-unsigned result.");
+		}
+		results.Add("PASS: real executable, signed-or-unsigned, and ZIP installer regression corpus.");
+	}
+
+	private static async Task TestInstallerTechnologyDetectionAsync(string root, List<string> results)
+	{
+		string source = Environment.ProcessPath ?? throw new InvalidOperationException("The running executable path is unavailable.");
+		(string Marker, string Technology, string InstallerType)[] cases =
+		[
+			("Inno Setup Setup Data", "Inno Setup", "inno"),
+			("NullsoftInst", "NSIS / Nullsoft", "nullsoft"),
+			("WixBundle", "WiX Burn bundle", "burn"),
+			("SquirrelSetup.log", "Squirrel.Windows", "exe"),
+			("VelopackAsset", "Velopack", "exe")
+		];
+		foreach ((string marker, string technology, string installerType) in cases)
+		{
+			string target = Path.Combine(root, technology.Replace('/', '-') + ".exe");
+			File.Copy(source, target);
+			await File.AppendAllTextAsync(target, marker, Encoding.ASCII);
+			InstallerInspection inspection = await InstallerInspector.InspectAsync(target, string.Empty);
+			Assert(inspection.Technology == technology && inspection.InstallerType == installerType,
+				$"EXE analysis must identify {technology} without changing its Winget-compatible installer type.");
+		}
+		results.Add("PASS: Inno, NSIS, Burn, Squirrel, and Velopack EXE technology detection.");
+	}
+
+	private static async Task TestPublicImportServicesAsync(string root, List<string> results)
+	{
+		RepositoryImportResult repository = await WingetRepositoryService.ImportLatestAsync(
+			"Microsoft.PowerToys", Path.Combine(root, "public-repository-import"));
+		ManifestProject imported = ManifestService.LoadProject(repository.ManifestFolder);
+		Assert(imported.LoadedFromExistingManifests
+			&& imported.PackageIdentifier == "Microsoft.PowerToys"
+			&& imported.Installers.Count > 0,
+			"Public package-ID import must download and populate a real current Winget manifest set.");
+		GitHubReleaseImport release = await GitHubReleaseService.ReadAsync(
+			"https://github.com/microsoft/PowerToys/releases/latest");
+		Assert(release.Owner == "microsoft" && release.Repository == "PowerToys"
+			&& release.Tag.Length > 0 && release.RepositoryUrl.Length > 0,
+			"Public GitHub release import must read real repository and release metadata.");
+		results.Add("PASS: live Winget package-ID and GitHub release import services.");
+	}
+
+	private static async Task TestOfficialGuidedSchemaAsync(string root, List<string> results)
+	{
+		ManifestProject project = SampleProject(Path.Combine(root, "official-guided-schema"));
+		project.Agreements = "Terms | https://example.com/terms | Read before installing";
+		project.Documentations = "User guide | https://example.com/docs";
+		project.PackageDependencies = "Microsoft.VCRedist.2015+.x64 | 14.0.0";
+		project.WindowsFeatures = "NetFx3";
+		project.ExpectedReturnCodes = "1603 | contactSupport | https://example.com/support";
+		project.UnsupportedArguments = "log, location";
+		project.DefaultInstallLocation = "%ProgramFiles%\\Contoso\\Sample";
+		project.InstalledFiles = "Sample.exe | launch | " + new string('A', 64) + " | --safe | Sample";
+		ManifestGenerationResult generated = ManifestService.Generate(project);
+		string? cleanFolder = null;
+		try
+		{
+			cleanFolder = ManifestService.CreateCleanManifestFolder(generated);
+			CommandResult validation = await WingetCommandService.ValidateManifestAsync(cleanFolder);
+			Assert(WingetCommandService.ManifestValidationSucceeded(validation), "Official Winget validation rejected guided uncommon schema fields: " + validation.CombinedOutput);
+		}
+		finally
+		{
+			ManifestService.DeleteCleanManifestFolder(cleanFolder);
+		}
+		results.Add("PASS: official Winget validation accepted guided uncommon schema fields.");
 	}
 
 	private static async Task TestFontInspectionAsync(string root, List<string> results)
@@ -617,7 +765,7 @@ ManifestVersion: 1.12.0
 			CommandResult validation = await WingetCommandService.ValidateManifestAsync(cleanFolder);
 			string details = string.Join(Environment.NewLine, new[] { validation.Output, validation.Error }
 				.Where(value => !string.IsNullOrWhiteSpace(value))).Trim();
-			Assert(validation.ExitCode == 0, "Official Winget validation failed: " + details);
+			Assert(WingetCommandService.ManifestValidationSucceeded(validation), "Official Winget validation failed: " + details);
 		}
 		finally
 		{

@@ -126,6 +126,14 @@ internal static class WingetCommandService
 		return RunWithTimeoutAsync("winget", ["validate", "--manifest", manifestFolder], manifestFolder, TimeSpan.FromSeconds(45), cancellationToken);
 	}
 
+	public static bool ManifestValidationSucceeded(CommandResult result)
+	{
+		if (result.ExitCode == 0) return true;
+		string output = result.CombinedOutput;
+		return output.Contains("manifest validation succeeded", StringComparison.OrdinalIgnoreCase)
+			&& !output.Contains("manifest validation failed", StringComparison.OrdinalIgnoreCase);
+	}
+
 	public static Task<CommandResult> SearchExactPackageAsync(string packageIdentifier, CancellationToken cancellationToken = default)
 	{
 		return RunWithTimeoutAsync("winget.exe", ["search", "--id", packageIdentifier, "--exact", "--source", "winget", "--accept-source-agreements"], Environment.CurrentDirectory, TimeSpan.FromSeconds(30), cancellationToken);

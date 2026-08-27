@@ -44,7 +44,10 @@ internal static class InstallerInspector
 			string sha256 = await CalculateSha256Async(inspectionPath, cancellationToken);
 			string extension = Path.GetExtension(inspectionPath).ToLowerInvariant();
 			string architecture = InferArchitecture(inspectionPath, extension);
-			string installerType = InferInstallerType(inspectionPath, extension);
+			ExecutableAnalysis executable = extension == ".exe" || IsPortableExecutable(inspectionPath)
+				? AnalyzeExecutable(inspectionPath)
+				: ExecutableAnalysis.Empty;
+			string installerType = InferInstallerType(inspectionPath, extension, executable);
 			string scope = string.Empty;
 			string nestedInstallerType = string.Empty;
 			string nestedInstallerFiles = string.Empty;
@@ -77,6 +80,7 @@ internal static class InstallerInspector
 				version = NormalizeVersion(info.ProductVersion ?? info.FileVersion ?? string.Empty);
 				displayName = info.ProductName ?? info.FileDescription ?? string.Empty;
 				publisher = info.CompanyName ?? string.Empty;
+				if (scope.Length == 0) scope = executable.SuggestedScope;
 			}
 			else if (extension == ".zip")
 			{
@@ -99,7 +103,12 @@ internal static class InstallerInspector
 				publisher ?? string.Empty,
 				new FileInfo(inspectionPath).Length,
 				signature,
-				signatureSha256);
+				signatureSha256,
+				executable.Technology.IfEmpty(installerType.ToUpperInvariant()),
+				executable.SilentSwitch,
+				executable.SilentWithProgressSwitch,
+				executable.InstallLocationSwitch,
+				BuildAnalysisNotes(executable, signature));
 		}
 		finally
 		{
@@ -128,7 +137,7 @@ internal static class InstallerInspector
 		return Convert.ToHexString(hash);
 	}
 
-	private static string InferInstallerType(string path, string extension)
+	private static string InferInstallerType(string path, string extension, ExecutableAnalysis executable)
 	{
 		return extension switch
 		{
@@ -139,19 +148,48 @@ internal static class InstallerInspector
 			".appxbundle" => "appx",
 			".zip" => "zip",
 			".otf" or ".otc" or ".ttf" or ".ttc" or ".fnt" => "font",
-			".exe" => InferExecutableInstallerType(path),
+			".exe" => executable.WingetInstallerType,
 			_ when LooksLikeMsi(path) => "msi",
-			_ when IsPortableExecutable(path) => InferExecutableInstallerType(path),
+			_ when IsPortableExecutable(path) => executable.WingetInstallerType,
 			_ => "portable"
 		};
 	}
 
-	private static string InferExecutableInstallerType(string path)
+	private static ExecutableAnalysis AnalyzeExecutable(string path)
 	{
-		if (ContainsMarker(path, "Inno Setup")) return "inno";
-		if (ContainsMarker(path, "Nullsoft")) return "nullsoft";
-		if (ContainsMarker(path, "WixBundle") || ContainsMarker(path, "WiX Toolset Burn")) return "burn";
-		return "exe";
+		FileVersionInfo versionInfo = FileVersionInfo.GetVersionInfo(path);
+		string sample = ReadMarkerSample(path) + " " + string.Join(" ",
+			versionInfo.CompanyName, versionInfo.ProductName, versionInfo.FileDescription, versionInfo.OriginalFilename);
+		bool Has(string marker) => sample.Contains(marker, StringComparison.OrdinalIgnoreCase);
+		if (Has("Inno Setup Setup Data") || Has("Inno Setup"))
+			return new("Inno Setup", "inno", string.Empty,
+				"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+				"/SILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+				"/DIR=\"<INSTALLPATH>\"",
+				"Winget recognizes Inno Setup and normally supplies its standard switches automatically.");
+		if (Has("NullsoftInst") || Has("Nullsoft Install System") || Has("Nullsoft"))
+			return new("NSIS / Nullsoft", "nullsoft", string.Empty, "/S", "/S", "/D=<INSTALLPATH>",
+				"Winget recognizes NSIS and normally supplies its standard silent switch automatically.");
+		if (Has("WixBundle") || Has("WiX Toolset Burn") || Has("BurnBundle"))
+			return new("WiX Burn bundle", "burn", string.Empty, "/quiet /norestart", "/passive /norestart", string.Empty,
+				"Winget recognizes WiX Burn bundles and normally supplies standard bundle switches automatically.");
+		if (Has("Velopack") || Has("VelopackPack") || Has("VelopackAsset"))
+			return new("Velopack", "exe", "user", string.Empty, string.Empty, string.Empty,
+				"Velopack was detected. Confirm the release's silent-install behavior because Winget has no separate Velopack installer type.");
+		if (Has("Squirrel") || (Has(".nupkg") && Has("Update.exe")))
+			return new("Squirrel.Windows", "exe", "user", "--silent", "--silent", string.Empty,
+				"Squirrel.Windows was detected. The standard bootstrapper is per-user and supports --silent; verify this release in Test Center.");
+		if (Has("InstallShield"))
+			return new("InstallShield", "exe", string.Empty, string.Empty, string.Empty, string.Empty,
+				"InstallShield was detected. Silent arguments vary by project and may require a response file, so none were assumed.");
+		if (Has("Advanced Installer"))
+			return new("Advanced Installer", "exe", string.Empty, string.Empty, string.Empty, string.Empty,
+				"Advanced Installer was detected. Confirm whether this EXE wraps an MSI before choosing custom switches.");
+		if (Has("7-Zip") && Has("SFX"))
+			return new("7-Zip self-extracting archive", "exe", string.Empty, string.Empty, string.Empty, string.Empty,
+				"A 7-Zip self-extracting executable was detected. Its install command is publisher-defined and was not guessed.");
+		return new("Generic executable", "exe", string.Empty, string.Empty, string.Empty, string.Empty,
+			"No known installer framework was found. Use the publisher's documentation and Test Center to prove silent installation.");
 	}
 
 	private static bool LooksLikeMsi(string path)
@@ -176,18 +214,47 @@ internal static class InstallerInspector
 		catch { return false; }
 	}
 
-	private static bool ContainsMarker(string path, string marker)
+	private static string ReadMarkerSample(string path)
 	{
-		const int sampleSize = 2 * 1024 * 1024;
+		const int sampleSize = 4 * 1024 * 1024;
 		using FileStream stream = File.OpenRead(path);
-		int length = (int)Math.Min(sampleSize, stream.Length);
-		byte[] bytes = new byte[length];
-		stream.ReadExactly(bytes);
-		string ascii = Encoding.ASCII.GetString(bytes);
-		if (ascii.Contains(marker, StringComparison.OrdinalIgnoreCase))
-			return true;
-		string unicode = Encoding.Unicode.GetString(bytes);
-		return unicode.Contains(marker, StringComparison.OrdinalIgnoreCase);
+		int firstLength = (int)Math.Min(sampleSize, stream.Length);
+		byte[] first = new byte[firstLength];
+		stream.ReadExactly(first);
+		byte[] last = [];
+		if (stream.Length > firstLength)
+		{
+			int lastLength = (int)Math.Min(sampleSize, stream.Length - firstLength);
+			last = new byte[lastLength];
+			stream.Seek(-lastLength, SeekOrigin.End);
+			stream.ReadExactly(last);
+		}
+		// Native installer signatures are stored as ASCII or exposed through the PE
+		// version resource above. Avoid decoding the whole binary as UTF-16: doing so
+		// would match the detector's own managed string literals when the Studio EXE
+		// itself is inspected.
+		return Encoding.ASCII.GetString(first) + Encoding.ASCII.GetString(last);
+	}
+
+	private static string BuildAnalysisNotes(ExecutableAnalysis executable, AuthenticodeInspection signature)
+	{
+		if (executable == ExecutableAnalysis.Empty) return signature.StatusMessage;
+		string signing = signature.IsSigned
+			? $"Digital signature: {signature.Status}{(string.IsNullOrWhiteSpace(signature.SignerName) ? string.Empty : " by " + signature.SignerName)}."
+			: "Digital signature: unsigned. Unsigned EXE/MSI installers are supported, and the Studio reports this as a warning rather than a failure.";
+		return executable.Notes + " " + signing;
+	}
+
+	private sealed record ExecutableAnalysis(
+		string Technology,
+		string WingetInstallerType,
+		string SuggestedScope,
+		string SilentSwitch,
+		string SilentWithProgressSwitch,
+		string InstallLocationSwitch,
+		string Notes)
+	{
+		public static readonly ExecutableAnalysis Empty = new(string.Empty, "exe", string.Empty, string.Empty, string.Empty, string.Empty, string.Empty);
 	}
 
 	private static string InferArchitecture(string path, string extension)

@@ -478,6 +478,203 @@ internal sealed class StudioDataGridView : DataGridView
 	}
 }
 
+internal sealed class StudioDataGridViewChoiceColumn : DataGridViewColumn
+{
+	public StudioDataGridViewChoiceColumn(IEnumerable<string> choices)
+		: base(new StudioDataGridViewChoiceCell(choices))
+	{
+		SortMode = DataGridViewColumnSortMode.NotSortable;
+	}
+}
+
+internal sealed class StudioDataGridViewChoiceCell : DataGridViewTextBoxCell
+{
+	private string[] choices;
+	private ContextMenuStrip? dropDownMenu;
+
+	public StudioDataGridViewChoiceCell() : this([]) { }
+
+	public StudioDataGridViewChoiceCell(IEnumerable<string> choices)
+	{
+		this.choices = choices
+			.Where(choice => !string.IsNullOrWhiteSpace(choice))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+	}
+
+	public override Type? EditType => null;
+	public override Type ValueType => typeof(string);
+	public override object DefaultNewRowValue => string.Empty;
+
+	public override object Clone()
+	{
+		StudioDataGridViewChoiceCell clone = (StudioDataGridViewChoiceCell)base.Clone();
+		clone.choices = [.. choices];
+		return clone;
+	}
+
+	protected override void OnMouseClick(DataGridViewCellMouseEventArgs eventArgs)
+	{
+		base.OnMouseClick(eventArgs);
+		if (eventArgs.Button == MouseButtons.Left)
+			ShowDropDown();
+	}
+
+	protected override void OnKeyDown(KeyEventArgs eventArgs, int rowIndex)
+	{
+		base.OnKeyDown(eventArgs, rowIndex);
+		if (eventArgs.KeyCode is Keys.Enter or Keys.Space || eventArgs.Alt && eventArgs.KeyCode == Keys.Down)
+		{
+			ShowDropDown();
+			eventArgs.Handled = true;
+		}
+		else if (eventArgs.KeyCode is Keys.Delete or Keys.Back)
+		{
+			SetChoice(string.Empty);
+			eventArgs.Handled = true;
+		}
+	}
+
+	private void ShowDropDown()
+	{
+		DataGridView? grid = DataGridView;
+		DataGridViewColumn? column = OwningColumn;
+		if (grid is null || column is null || RowIndex < 0 || ColumnIndex < 0 || choices.Length == 0)
+			return;
+		if (dropDownMenu is { Visible: true })
+			return;
+		dropDownMenu?.Dispose();
+		dropDownMenu = null;
+
+		grid.CurrentCell = this;
+		string current = Convert.ToString(Value) ?? string.Empty;
+		int menuWidth = Math.Max(150, column.Width - 12);
+		ContextMenuStrip menu = new()
+		{
+			AutoSize = false,
+			ShowImageMargin = false,
+			ShowCheckMargin = false,
+			BackColor = StudioPalette.Card,
+			ForeColor = StudioPalette.PrimaryText,
+			Font = grid.Font,
+			Padding = new Padding(4),
+			Size = new Size(menuWidth, Math.Min(320, (choices.Length + 1) * 36 + 8)),
+			Renderer = new StudioMenuRenderer()
+		};
+
+		AddMenuItem(menu, "Leave blank", string.Empty, string.IsNullOrWhiteSpace(current));
+		foreach (string choice in choices)
+			AddMenuItem(menu, choice, choice, string.Equals(choice, current, StringComparison.OrdinalIgnoreCase));
+
+		dropDownMenu = menu;
+		menu.Closed += (_, _) => grid.InvalidateCell(this);
+		menu.Disposed += (_, _) =>
+		{
+			if (ReferenceEquals(dropDownMenu, menu))
+				dropDownMenu = null;
+		};
+		Rectangle bounds = grid.GetCellDisplayRectangle(ColumnIndex, RowIndex, false);
+		menu.Show(grid, new Point(bounds.Left + 6, bounds.Bottom - 4));
+		grid.InvalidateCell(this);
+	}
+
+	internal void ExerciseDropDownLifecycle()
+	{
+		ShowDropDown();
+		Application.DoEvents();
+		dropDownMenu?.Close();
+		Application.DoEvents();
+		ShowDropDown();
+		Application.DoEvents();
+		dropDownMenu?.Close();
+		Application.DoEvents();
+	}
+
+	private void AddMenuItem(ContextMenuStrip menu, string label, string value, bool selected)
+	{
+		ToolStripMenuItem item = new(label)
+		{
+			AutoSize = false,
+			Size = new Size(Math.Max(40, menu.Width - 10), 34),
+			Checked = selected,
+			CheckOnClick = false
+		};
+		item.Click += (_, _) => SetChoice(value);
+		menu.Items.Add(item);
+	}
+
+	private void SetChoice(string value)
+	{
+		if (DataGridView is null || RowIndex < 0)
+			return;
+
+		Value = value;
+		DataGridView.NotifyCurrentCellDirty(true);
+		DataGridView.CommitEdit(DataGridViewDataErrorContexts.Commit);
+		DataGridView.EndEdit();
+		DataGridView.InvalidateCell(this);
+	}
+
+	protected override void Dispose(bool disposing)
+	{
+		if (disposing)
+		{
+			dropDownMenu?.Dispose();
+			dropDownMenu = null;
+		}
+		base.Dispose(disposing);
+	}
+
+	protected override void Paint(
+		Graphics graphics,
+		Rectangle clipBounds,
+		Rectangle cellBounds,
+		int rowIndex,
+		DataGridViewElementStates cellState,
+		object? value,
+		object? formattedValue,
+		string? errorText,
+		DataGridViewCellStyle cellStyle,
+		DataGridViewAdvancedBorderStyle advancedBorderStyle,
+		DataGridViewPaintParts paintParts)
+	{
+		bool selected = (cellState & DataGridViewElementStates.Selected) != 0;
+		Color rowColor = selected ? cellStyle.SelectionBackColor : cellStyle.BackColor;
+		using (SolidBrush rowBrush = new(rowColor))
+			graphics.FillRectangle(rowBrush, cellBounds);
+
+		using (Pen divider = new(StudioPalette.Divider))
+			graphics.DrawLine(divider, cellBounds.Left, cellBounds.Bottom - 1, cellBounds.Right, cellBounds.Bottom - 1);
+
+		Rectangle controlBounds = new(
+			cellBounds.Left + 5,
+			cellBounds.Top + 5,
+			Math.Max(1, cellBounds.Width - 10),
+			Math.Max(1, cellBounds.Height - 10));
+		bool current = DataGridView?.CurrentCell == this;
+		using GraphicsPath path = StudioGeometry.RoundedRectangle(controlBounds, 7);
+		using SolidBrush fill = new(current ? StudioPalette.CardHover : StudioPalette.Input);
+		using Pen border = new(current ? StudioPalette.Accent : StudioPalette.Border, current ? 1.5F : 1F);
+		graphics.SmoothingMode = SmoothingMode.AntiAlias;
+		graphics.FillPath(fill, path);
+		graphics.DrawPath(border, path);
+
+		Rectangle textBounds = new(controlBounds.Left + 10, controlBounds.Top + 1, Math.Max(1, controlBounds.Width - 38), controlBounds.Height - 2);
+		TextRenderer.DrawText(
+			graphics,
+			Convert.ToString(formattedValue) ?? string.Empty,
+			cellStyle.Font ?? DataGridView?.Font ?? Control.DefaultFont,
+			textBounds,
+			StudioPalette.PrimaryText,
+			TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+
+		Point center = new(controlBounds.Right - 17, controlBounds.Top + controlBounds.Height / 2);
+		Point[] arrow = [new(center.X - 5, center.Y - 2), new(center.X + 5, center.Y - 2), new(center.X, center.Y + 4)];
+		using SolidBrush arrowBrush = new(StudioPalette.Accent);
+		graphics.FillPolygon(arrowBrush, arrow);
+	}
+}
+
 internal sealed class StudioTextBox : UserControl
 {
 	private readonly TextBox editor = new();
@@ -842,6 +1039,56 @@ internal sealed class StudioCheckBox : CheckBox
 		Rectangle textBounds = new(30, 0, Math.Max(1, Width - 30), Height);
 		TextRenderer.DrawText(eventArgs.Graphics, Text, Font, textBounds, Enabled ? ForeColor : StudioPalette.MutedText,
 			TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+	}
+}
+
+internal sealed class StudioToggleSwitch : CheckBox
+{
+	private bool hovered;
+
+	public StudioToggleSwitch()
+	{
+		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+		AutoSize = false;
+		Size = new Size(72, 32);
+		Cursor = Cursors.Hand;
+		ForeColor = StudioPalette.SecondaryText;
+		Font = new Font("Segoe UI Semibold", 7.5F, FontStyle.Bold);
+		UseVisualStyleBackColor = false;
+	}
+
+	protected override void OnMouseEnter(EventArgs eventArgs) { hovered = true; Invalidate(); base.OnMouseEnter(eventArgs); }
+	protected override void OnMouseLeave(EventArgs eventArgs) { hovered = false; Invalidate(); base.OnMouseLeave(eventArgs); }
+	protected override void OnCheckedChanged(EventArgs eventArgs) { base.OnCheckedChanged(eventArgs); Invalidate(); }
+
+	protected override void OnPaint(PaintEventArgs eventArgs)
+	{
+		Graphics graphics = eventArgs.Graphics;
+		graphics.SmoothingMode = SmoothingMode.AntiAlias;
+		graphics.Clear(Parent?.BackColor ?? StudioPalette.Window);
+
+		Rectangle bounds = new(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
+		using GraphicsPath trackPath = StudioGeometry.RoundedRectangle(bounds, Height / 2);
+		Color trackColor = Checked
+			? hovered ? StudioPalette.AccentHover : StudioPalette.Accent
+			: hovered ? StudioPalette.CardHover : StudioPalette.Divider;
+		using SolidBrush trackFill = new(trackColor);
+		using Pen trackBorder = new(Checked || Focused ? StudioPalette.Accent : StudioPalette.Border, Focused ? 1.5F : 1F);
+		graphics.FillPath(trackFill, trackPath);
+		graphics.DrawPath(trackBorder, trackPath);
+
+		int knobSize = Height - 10;
+		int knobX = Checked ? Width - knobSize - 5 : 5;
+		Rectangle knob = new(knobX, 5, knobSize, knobSize);
+		using SolidBrush knobFill = new(Checked ? Color.FromArgb(3, 31, 35) : StudioPalette.MutedText);
+		graphics.FillEllipse(knobFill, knob);
+
+		Rectangle stateBounds = Checked
+			? new Rectangle(5, 1, Math.Max(1, knob.Left - 7), Height - 2)
+			: new Rectangle(knob.Right + 2, 1, Math.Max(1, Width - knob.Right - 7), Height - 2);
+		TextRenderer.DrawText(graphics, Checked ? "ON" : "OFF", Font, stateBounds,
+			Checked ? Color.FromArgb(3, 31, 35) : StudioPalette.SecondaryText,
+			TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 	}
 }
 

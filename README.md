@@ -12,12 +12,15 @@ It is designed for first-time package publishers while retaining the controls ex
 
 - Create a new three-file Winget manifest project.
 - Load and safely update an existing manifest folder.
+- Import the newest manifest set for any exact Winget package ID into a separate working copy.
+- Import public GitHub release metadata and supported release assets without hardcoded publishers or repositories.
 - Preserve parsed custom and unsupported YAML fields.
 - Calculate SHA-256 hashes from local release files.
 - Read supported MSI ProductCode, UpgradeCode, architecture, and install-scope values.
 - Discover supported installer files inside ZIP packages and generate `NestedInstallerFiles` entries.
 - Treat each installer row independently, including mixed architectures, installer technologies, and scopes.
-- Inspect Authenticode and MSIX/APPX signature information.
+- Inspect Authenticode and MSIX/APPX signature information while supporting both signed and unsigned EXE/MSI installers.
+- Identify common EXE technologies including Inno Setup, NSIS, WiX Burn, Squirrel, Velopack, InstallShield, Advanced Installer, and self-extracting archives.
 - Verify that public download URLs match attached local files.
 - Preview changes without writing files.
 - Create timestamped backups before replacing manifests.
@@ -42,7 +45,7 @@ WingetCreate is only required for its official commands and submission workflow.
 
 Download `StudioSetup.msi` from the repository's [Releases](https://github.com/ubidzz/WingetManifestStudio/releases) page and run it normally. Administrator permission is not required to edit manifests. Windows may request approval only for operations that inherently require elevation, such as enabling Winget local-manifest testing or running an installer that requires it.
 
-The published setup is intentionally framework-dependent and does **not** bundle the .NET 10 framework. Install the Microsoft .NET 10 Desktop Runtime x64 if Windows reports that the runtime is missing.
+The published setup is intentionally framework-dependent and does **not** bundle the .NET 10 framework. When the runtime is missing, the Windows .NET application host shows the runtime-required prompt and provides the installation path; after installing the Microsoft .NET 10 Desktop Runtime x64, open the Studio again.
 
 ## Guided Workflow
 
@@ -62,6 +65,8 @@ Choose one of these paths:
 
 - **Create a new project** selects an output folder for a new manifest set.
 - **Load existing manifests** reads the YAML files in an existing package folder.
+- **Import existing Winget package** accepts any exact `Publisher.Application` ID, downloads the newest manifest set from `microsoft/winget-pkgs`, and creates a new `PackageID\Version` working folder without overwriting existing files.
+- **Import a GitHub release** accepts any public `github.com/owner/repository/releases/tag/...` or `/releases/latest` URL. It fills only blank metadata fields, lets the user choose the actual installer assets, and asks before downloading those selections temporarily for hashing and inspection.
 
 Loading and previewing do not modify the selected manifests.
 
@@ -69,7 +74,7 @@ Loading and previewing do not modify the selected manifests.
 
 Complete the required package identity and public information. A package identifier normally uses `Publisher.ApplicationName`, contains a dot, and stays unchanged between releases. Enter versions without a leading `v`.
 
-Every field includes beginner guidance. Uncommon schema fields are available under the optional sections and may be left blank when they do not apply.
+Every field includes beginner guidance. Optional guided controls cover agreements, documentation links, package and Windows-feature dependencies, MSIX capabilities, market rules, expected return codes, unsupported Winget arguments, installed-file detection, and private-source authentication. The raw YAML boxes remain an escape hatch for fields that still have no guided control.
 
 ### 3. Installers
 
@@ -82,7 +87,9 @@ Follow the four numbered actions shown across the top:
 
 Use one installer row for each architecture or installer variation. The Studio does not assume that every package is x64 or that every row uses the same installer technology. A release webpage is not an installer URL; use the direct release-asset URL.
 
-MSI files can provide the product name, publisher, version, ProductCode, UpgradeCode, architecture, and install scope. EXE metadata is used only to fill empty package fields; inspection never replaces a package name, publisher, or release version you already entered. ZIP rows show the detected files inside the archive. Review the nested type and paths before saving, especially when a ZIP contains more than one executable.
+MSI files can provide the product name, publisher, version, ProductCode, UpgradeCode, architecture, and install scope. EXE analysis reports the detected installer technology and explains whether Winget has known switches or the publisher's documentation must be checked. EXE metadata is used only to fill empty package fields; inspection never replaces a package name, publisher, or release version you already entered. ZIP rows show the detected files inside the archive. Review the nested type and paths before saving, especially when a ZIP contains more than one executable.
+
+Signed and unsigned are both completed inspection results. An unsigned EXE or MSI is allowed and shown as a warning so the maintainer can make an informed decision. MSIX and APPX packages are different: Microsoft's community repository requires their package signature, so a missing package signature remains a blocking preflight result.
 
 ### 4. Review
 
@@ -145,6 +152,7 @@ There are two intentional limitations:
 - Existing manifests are backed up before replacement.
 - Installer inspection and hashing happen locally.
 - Public URL verification downloads to a temporary location and does not replace the attached file.
+- Repository and GitHub imports run only after the user chooses them. Installer assets are never downloaded merely because the application opened.
 - Installation and Sandbox tests require an explicit user action.
 - Interactive commands open a persistent console so questions and errors remain visible.
 - GitHub tokens are owned by WingetCreate and Windows Credential Manager.
@@ -153,7 +161,7 @@ There are two intentional limitations:
 
 ## Supported Installer Formats
 
-Guided authoring support includes MSI, WiX, EXE, Burn, Inno Setup, Nullsoft, MSIX, APPX, bundles, ZIP, PWA, portable packages, and fonts. Supported architectures are x86, x64, ARM, ARM64, and neutral. Advanced mappings provide access to uncommon Winget installer fields when a package needs them.
+Guided authoring support includes MSI, WiX, EXE, Burn, Inno Setup, Nullsoft, MSIX, APPX, bundles, ZIP, PWA, portable packages, and fonts. Supported architectures are x86, x64, ARM, ARM64, and neutral. EXE inspection also recognizes Squirrel, Velopack, InstallShield, Advanced Installer, and 7-Zip self-extracting clues while keeping the Winget installer type editable. Guided uncommon fields cover most current nested schema structures; advanced mappings remain available for the rest.
 
 Portable EXEs cannot always be distinguished safely from normal EXE installers, so the detected type remains editable. Font packages use the separate `fonts` root in microsoft/winget-pkgs and are subject to stricter submission availability. PWA support can vary by Winget client and repository policy. The Studio warns about these cases and leaves final validation and submission decisions to Microsoft's current Winget and WingetCreate tools.
 
@@ -193,9 +201,15 @@ Run the automated functional and off-screen interface tests without opening visi
 ./ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe --startup-probe
 ```
 
+An optional live importer test verifies the public Winget repository and GitHub release APIs. It requires internet access and is intentionally separate from deterministic CI tests:
+
+```powershell
+./ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe --self-test --network-tests
+```
+
 ## Automated Repository Checks
 
-Every push and pull request to `master` runs a clean Windows build followed by the functional self-test, off-screen interface test, and startup probe. The startup check rejects a first-window time above 15 seconds so major launch-time regressions cannot pass unnoticed. Test reports and off-screen screenshots are retained with each workflow run.
+Every push and pull request to `master` runs a clean Windows build followed by the functional self-test, off-screen interface test, and startup probe. The interface suite checks multiple layouts from 1100×720 through 1920×1080 under the active Windows DPI setting. The functional corpus inspects real PE files, signed-or-unsigned results, MSI input when supplied, and ZIP packages containing real executables. The startup check rejects a first-window time above 15 seconds so major launch-time regressions cannot pass unnoticed. Test reports and off-screen screenshots are retained with each workflow run.
 
 Repository security automation also includes:
 
