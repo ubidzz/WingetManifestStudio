@@ -40,6 +40,9 @@ internal static class UiSelfTestRunner
 				form.RenderTabForVerification("Installers & Hashes", Path.Combine(AppContext.BaseDirectory, "ui-installers.png"));
 				form.RenderTabForVerification("Preview & Submit", Path.Combine(AppContext.BaseDirectory, "ui-review.png"));
 				form.RenderTabForVerification("Test Center", Path.Combine(AppContext.BaseDirectory, "ui-test-center.png"));
+				form.SetLanguageForVerification("es-ES");
+				form.RenderTabForVerification("Installers & Hashes", Path.Combine(AppContext.BaseDirectory, "ui-installers-es.png"));
+				form.RenderTabForVerification("Preview & Submit", Path.Combine(AppContext.BaseDirectory, "ui-review-es.png"));
 				exitCode = report.Any(line => line.StartsWith("FAIL", StringComparison.Ordinal)) ? 1 : 0;
 			}
 			catch (Exception ex)

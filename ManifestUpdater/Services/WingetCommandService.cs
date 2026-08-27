@@ -170,6 +170,136 @@ internal static class WingetCommandService
 			"sandbox-test");
 	}
 
+	public static InteractiveCommandSession StartSandboxInstallUninstallTestSession(
+		string scriptPath,
+		string manifestFolder,
+		ManifestProject project)
+	{
+		string mapFolder = Directory.GetParent(manifestFolder)?.FullName ?? manifestFolder;
+		string resultFileName = $"install-uninstall-{Guid.NewGuid():N}.txt";
+		string hostResultPath = Path.Combine(
+			Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+			"Packages",
+			"Microsoft.DesktopAppInstaller_8wekyb3d8bbwe",
+			"SandboxTest",
+			resultFileName);
+		string verificationScript = BuildSandboxInstallUninstallScript(project, resultFileName);
+		InteractiveCommandSession session = StartPersistentConsoleSession(
+			"powershell.exe",
+			["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath,
+				"-Manifest", manifestFolder, "-MapFolder", mapFolder, "-Script", verificationScript,
+				"-WarningAction", "Continue"],
+			mapFolder,
+			"Winget Manifest Studio - Sandbox Install and Uninstall Test",
+			"sandbox-install-uninstall");
+		return session with { ResultPath = hostResultPath };
+	}
+
+	internal static string BuildSandboxInstallUninstallScript(ManifestProject project, string resultFileName)
+	{
+		string[] productCodes = project.Installers.Select(item => item.ProductCode)
+			.Where(value => !string.IsNullOrWhiteSpace(value))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		string[] names = project.Installers.Select(item => item.DisplayName)
+			.Append(project.PackageName)
+			.Where(value => !string.IsNullOrWhiteSpace(value))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		string Encode(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+		string packageId = Encode(project.PackageIdentifier);
+		string encodedProductCodes = Encode(JsonSerializer.Serialize(productCodes));
+		string encodedNames = Encode(JsonSerializer.Serialize(names));
+		string packageFamilyName = Encode(project.PackageFamilyName);
+		string encodedResultName = Encode(resultFileName);
+
+		return $$"""
+			$ErrorActionPreference = 'Stop'
+			function ConvertFrom-WmsBase64([string] $Value) {
+			    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+			}
+			$packageId = ConvertFrom-WmsBase64 '{{packageId}}'
+			$productCodes = @((ConvertFrom-Json -InputObject (ConvertFrom-WmsBase64 '{{encodedProductCodes}}')))
+			$displayNames = @((ConvertFrom-Json -InputObject (ConvertFrom-WmsBase64 '{{encodedNames}}')))
+			$packageFamilyName = ConvertFrom-WmsBase64 '{{packageFamilyName}}'
+			$resultFileName = ConvertFrom-WmsBase64 '{{encodedResultName}}'
+			$resultPath = Join-Path -Path $PSScriptRoot -ChildPath $resultFileName
+			function Save-WmsResult([string] $Status, [string] $Message, [string] $Method) {
+			    @(
+			        "STATUS=$Status"
+			        "PACKAGE=$packageId"
+			        "METHOD=$Method"
+			        "MESSAGE=$Message"
+			    ) | Set-Content -LiteralPath $resultPath -Encoding UTF8
+			}
+			function Get-WmsArpMatches {
+			    $paths = @(
+			        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+			        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+			        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+			        'HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+			    )
+			    return @(Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object {
+			        ($productCodes.Count -gt 0 -and $productCodes -contains $_.PSChildName) -or
+			        ($displayNames.Count -gt 0 -and $displayNames -contains $_.DisplayName)
+			    })
+			}
+			function Get-WmsAppxMatches {
+			    if ([string]::IsNullOrWhiteSpace($packageFamilyName)) { return @() }
+			    return @(Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.PackageFamilyName -eq $packageFamilyName })
+			}
+			function Test-WmsWingetInstalled {
+			    $selectors = @()
+			    if (-not [string]::IsNullOrWhiteSpace($packageId)) { $selectors += ,@('--id', $packageId, '--exact') }
+			    foreach ($code in $productCodes) { $selectors += ,@('--product-code', $code) }
+			    foreach ($name in $displayNames) { $selectors += ,@('--name', $name, '--exact') }
+			    foreach ($selector in $selectors) {
+			        & winget.exe list @selector --accept-source-agreements --disable-interactivity 2>&1 | Out-Host
+			        if ($LASTEXITCODE -eq 0) { return $true }
+			    }
+			    return $false
+			}
+			try {
+			    Write-Host ''
+			    Write-Host '--> Winget Manifest Studio: verifying the installed package' -ForegroundColor Cyan
+			    $beforeArp = @(Get-WmsArpMatches)
+			    $beforeAppx = @(Get-WmsAppxMatches)
+			    $beforeWinget = Test-WmsWingetInstalled
+			    if ($beforeArp.Count -eq 0 -and $beforeAppx.Count -eq 0 -and -not $beforeWinget) {
+			        throw 'The package installed, but its Winget, Apps & Features, or MSIX identity could not be found for the uninstall test.'
+			    }
+			    Write-Host '--> Uninstalling the package through Winget' -ForegroundColor Cyan
+			    $selectors = @()
+			    if (-not [string]::IsNullOrWhiteSpace($packageId)) { $selectors += ,@('--id', $packageId, '--exact') }
+			    foreach ($code in $productCodes) { $selectors += ,@('--product-code', $code) }
+			    foreach ($name in $displayNames) { $selectors += ,@('--name', $name, '--exact') }
+			    $uninstallMethod = ''
+			    foreach ($selector in $selectors) {
+			        & winget.exe uninstall @selector --silent --accept-source-agreements --disable-interactivity
+			        if ($LASTEXITCODE -eq 0) {
+			            $uninstallMethod = $selector -join ' '
+			            break
+			        }
+			    }
+			    if ([string]::IsNullOrWhiteSpace($uninstallMethod)) { throw 'Winget could not uninstall the package by package ID, product code, or installed name.' }
+			    Start-Sleep -Seconds 3
+			    Write-Host '--> Verifying the package was removed' -ForegroundColor Cyan
+			    $afterArp = @(Get-WmsArpMatches)
+			    $afterAppx = @(Get-WmsAppxMatches)
+			    $afterWinget = Test-WmsWingetInstalled
+			    if ($afterArp.Count -gt 0 -or $afterAppx.Count -gt 0 -or $afterWinget) {
+			        throw 'The uninstall command completed, but the package is still visible in Winget, Apps & Features, or the installed MSIX packages.'
+			    }
+			    Save-WmsResult 'PASS' 'Installation was detected, Winget uninstalled the package, and the installed identity was removed.' $uninstallMethod
+			    Write-Host 'PASS: install and uninstall verification completed.' -ForegroundColor Green
+			} catch {
+			    Save-WmsResult 'FAIL' $_.Exception.Message $uninstallMethod
+			    Write-Host ('FAIL: ' + $_.Exception.Message) -ForegroundColor Red
+			    throw
+			}
+			""";
+	}
+
 	internal static ProcessStartInfo CreateEnableLocalManifestFilesStartInfo()
 	{
 		string wingetPath = Path.Combine(
@@ -456,4 +586,4 @@ internal static class WingetCommandService
 	}
 }
 
-internal sealed record InteractiveCommandSession(int ProcessId, string LogPath);
+internal sealed record InteractiveCommandSession(int ProcessId, string LogPath, string? ResultPath = null);

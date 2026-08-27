@@ -40,7 +40,7 @@ internal static partial class ManifestService
 			PackageIdentifier = FirstScalar("PackageIdentifier", versionText, localeText, installerText),
 			PackageVersion = FirstScalar("PackageVersion", versionText, localeText, installerText),
 			DefaultLocale = FirstScalar("DefaultLocale", versionText).IfEmpty(FirstScalar("PackageLocale", localeText)).IfEmpty("en-US"),
-			ManifestVersion = FirstScalar("ManifestVersion", versionText, localeText, installerText).IfEmpty("1.12.0"),
+			ManifestVersion = FirstScalar("ManifestVersion", versionText, localeText, installerText).IfEmpty(ManifestSchemaSupport.CurrentVersion),
 			Publisher = FirstScalar("Publisher", localeText),
 			PublisherUrl = FirstScalar("PublisherUrl", localeText),
 			PublisherSupportUrl = FirstScalar("PublisherSupportUrl", localeText),
@@ -182,10 +182,10 @@ internal static partial class ManifestService
 			errors.Add("Package Version cannot exceed 128 characters or contain Windows path symbols.");
 		if (string.IsNullOrWhiteSpace(project.DefaultLocale)) errors.Add("Default Locale is required, usually en-US.");
 		else if (project.DefaultLocale.Length > 20 || !LocaleRegex().IsMatch(project.DefaultLocale)) errors.Add("Default Locale must be a language tag of 20 characters or fewer, such as en-US, es-ES, fr-FR, or ja-JP.");
-		if (string.IsNullOrWhiteSpace(project.ManifestVersion)) errors.Add("Manifest Version is required, usually 1.12.0.");
+		if (string.IsNullOrWhiteSpace(project.ManifestVersion)) errors.Add($"Manifest Version is required, usually {ManifestSchemaSupport.CurrentVersion} for current Winget clients.");
 		else if (!ManifestVersionRegex().IsMatch(project.ManifestVersion)
 			|| project.ManifestVersion.Split('.').Any(part => !ushort.TryParse(part, out _)))
-			errors.Add("Manifest Version must use three numeric parts from 0 through 65535, such as 1.12.0.");
+			errors.Add($"Manifest Version must use three numeric parts from 0 through 65535, such as {ManifestSchemaSupport.CurrentVersion}.");
 		if (string.IsNullOrWhiteSpace(project.PackageName)) errors.Add("Package Name is required.");
 		if (string.IsNullOrWhiteSpace(project.Publisher)) errors.Add("Publisher is required.");
 		if (string.IsNullOrWhiteSpace(project.ShortDescription)) errors.Add("Short Description is required.");

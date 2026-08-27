@@ -56,7 +56,7 @@ internal static class SchemaAwareYaml
 			PackageIdentifier = FirstValue("PackageIdentifier", versionRoot, localeRoot, installerRoot),
 			PackageVersion = FirstValue("PackageVersion", versionRoot, localeRoot, installerRoot),
 			DefaultLocale = Value(versionRoot, "DefaultLocale").IfEmpty(Value(localeRoot, "PackageLocale")).IfEmpty("en-US"),
-			ManifestVersion = FirstValue("ManifestVersion", versionRoot, localeRoot, installerRoot).IfEmpty("1.12.0"),
+			ManifestVersion = FirstValue("ManifestVersion", versionRoot, localeRoot, installerRoot).IfEmpty(ManifestSchemaSupport.CurrentVersion),
 			Publisher = Value(localeRoot, "Publisher"),
 			PublisherUrl = Value(localeRoot, "PublisherUrl"),
 			PublisherSupportUrl = Value(localeRoot, "PublisherSupportUrl"),

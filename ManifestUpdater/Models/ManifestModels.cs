@@ -9,7 +9,7 @@ public sealed class ManifestProject
 	public string PackageIdentifier { get; set; } = string.Empty;
 	public string PackageVersion { get; set; } = string.Empty;
 	public string DefaultLocale { get; set; } = "en-US";
-	public string ManifestVersion { get; set; } = "1.12.0";
+	public string ManifestVersion { get; set; } = ManifestSchemaSupport.CurrentVersion;
 	public string ManifestFolder { get; set; } = string.Empty;
 	public string Publisher { get; set; } = string.Empty;
 	public string PublisherUrl { get; set; } = string.Empty;

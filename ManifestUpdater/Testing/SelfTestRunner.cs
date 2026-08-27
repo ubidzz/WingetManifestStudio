@@ -29,6 +29,7 @@ internal static class SelfTestRunner
 			TestWingetCreateCommandModes(results);
 			TestCredentialStatusCheck(results);
 			TestTestingEnvironmentChecks(results);
+			await TestSchemaRecommendationAndSandboxUninstallAsync(results);
 			TestInstalledVerificationMatching(results);
 			TestRepositoryPathAndLocalization(results);
 			TestGitHubReleaseParsing(results);
@@ -585,6 +586,67 @@ ManifestVersion: 1.12.0
 		results.Add("PASS: WingetCreate interactive commands are routed to a real console.");
 	}
 
+	private static async Task TestSchemaRecommendationAndSandboxUninstallAsync(List<string> results)
+	{
+		Assert(ManifestSchemaSupport.RecommendedForWinget("v1.29.290") == "1.28.0"
+			&& ManifestSchemaSupport.RecommendedForWinget("v1.28.10") == "1.28.0"
+			&& ManifestSchemaSupport.RecommendedForWinget("v1.12.350") == "1.12.0"
+			&& ManifestSchemaSupport.RecommendedForWinget("v1.10.100") == "1.10.0",
+			"The manifest schema recommendation must follow the installed Winget version.");
+		ManifestProject project = new()
+		{
+			PackageIdentifier = "AnyPublisher.AnyApplication",
+			PackageVersion = "2.4.0",
+			Publisher = "Any Publisher",
+			PackageName = "Any Application",
+			License = "MIT",
+			ShortDescription = "A package-independent schema test.",
+			ManifestFolder = Path.Combine(Path.GetTempPath(), "WingetManifestStudio-SchemaTest"),
+			PackageFamilyName = "AnyPublisher.AnyApplication_1234567890abc"
+		};
+		project.Installers.Add(new InstallerArtifact
+		{
+			ProductCode = "{11111111-2222-3333-4444-555555555555}",
+			DisplayName = "Any Application",
+			Architecture = "x64",
+			InstallerType = "msi",
+			InstallerUrl = "https://example.com/AnyApplication.msi",
+			Sha256 = new string('A', 64)
+		});
+		ManifestGenerationResult currentSchema = ManifestService.Generate(project);
+		Assert(project.ManifestVersion == ManifestSchemaSupport.CurrentVersion
+			&& currentSchema.Files.Values.All(yaml => yaml.Contains("ManifestVersion: 1.28.0", StringComparison.Ordinal)
+				&& yaml.Contains(".1.28.0.schema.json", StringComparison.Ordinal)),
+			"A new package must generate every manifest against the selected current schema.");
+		string script = WingetCommandService.BuildSandboxInstallUninstallScript(project, "safe-result.txt");
+		Assert(script.Contains("winget.exe uninstall", StringComparison.OrdinalIgnoreCase)
+			&& script.Contains("STATUS=", StringComparison.Ordinal)
+			&& script.Contains("Get-WmsArpMatches", StringComparison.Ordinal)
+			&& script.Contains("Get-WmsAppxMatches", StringComparison.Ordinal)
+			&& !script.Contains(project.PackageIdentifier, StringComparison.Ordinal)
+			&& !script.Contains(project.PackageName, StringComparison.Ordinal),
+			"The disposable uninstall script must verify removal and encode package-specific values instead of injecting them into PowerShell.");
+		ProcessStartInfo parserStartInfo = new()
+		{
+			FileName = "powershell.exe",
+			UseShellExecute = false,
+			CreateNoWindow = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		};
+		parserStartInfo.ArgumentList.Add("-NoLogo");
+		parserStartInfo.ArgumentList.Add("-NoProfile");
+		parserStartInfo.ArgumentList.Add("-NonInteractive");
+		parserStartInfo.ArgumentList.Add("-Command");
+		parserStartInfo.ArgumentList.Add("$source=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:WMS_SANDBOX_SCRIPT)); $tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)|Out-Null; if($errors.Count -gt 0){$errors|ForEach-Object{[Console]::Error.WriteLine($_.Message)}; exit 1}");
+		parserStartInfo.Environment["WMS_SANDBOX_SCRIPT"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
+		using Process parser = Process.Start(parserStartInfo) ?? throw new InvalidOperationException("PowerShell syntax verification could not start.");
+		string parserError = await parser.StandardError.ReadToEndAsync();
+		await parser.WaitForExitAsync();
+		Assert(parser.ExitCode == 0, "The generated Sandbox install-and-uninstall PowerShell did not parse: " + parserError);
+		results.Add("PASS: current-schema recommendation and package-independent Sandbox uninstall verification.");
+	}
+
 	private static void TestCredentialStatusCheck(List<string> results)
 	{
 		_ = WingetCommandService.IsGitHubTokenStored();
@@ -683,7 +745,14 @@ ManifestVersion: 1.12.0
 
 	private static async Task TestOfficialGuidedSchemaAsync(string root, List<string> results)
 	{
+		WingetHealthResult health = await WingetCommandService.CheckWingetHealthAsync();
+		if (!health.IsReady)
+		{
+			results.Add($"SKIP: official Winget schema validation is unavailable in this test session: {health.Message}");
+			return;
+		}
 		ManifestProject project = SampleProject(Path.Combine(root, "official-guided-schema"));
+		project.ManifestVersion = ManifestSchemaSupport.CurrentVersion;
 		project.Agreements = "Terms | https://example.com/terms | Read before installing";
 		project.Documentations = "User guide | https://example.com/docs";
 		project.PackageDependencies = "Microsoft.VCRedist.2015+.x64 | 14.0.0";
@@ -704,7 +773,7 @@ ManifestVersion: 1.12.0
 		{
 			ManifestService.DeleteCleanManifestFolder(cleanFolder);
 		}
-		results.Add("PASS: official Winget validation accepted guided uncommon schema fields.");
+		results.Add($"PASS: official Winget validation accepted guided uncommon schema fields with manifest schema {ManifestSchemaSupport.CurrentVersion}.");
 	}
 
 	private static async Task TestFontInspectionAsync(string root, List<string> results)

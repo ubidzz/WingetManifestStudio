@@ -26,6 +26,7 @@ It is designed for first-time package publishers while retaining the controls ex
 - Create timestamped backups before replacing manifests.
 - Validate with the official Winget command.
 - Test a manifest installation locally or in Windows Sandbox.
+- Run an optional Windows Sandbox install-and-uninstall cycle that verifies the installed identity is removed.
 - Confirm the installed package and version.
 - Submit through Microsoft's official WingetCreate workflow.
 - Keep GitHub authentication in WingetCreate and Windows Credential Manager.
@@ -76,6 +77,8 @@ Complete the required package identity and public information. A package identif
 
 Every field includes beginner guidance. Optional guided controls cover agreements, documentation links, package and Windows-feature dependencies, MSIX capabilities, market rules, expected return codes, unsupported Winget arguments, installed-file detection, and private-source authentication. The raw YAML boxes remain an escape hatch for fields that still have no guided control.
 
+The schema control offers current and compatible manifest versions. New projects default to schema `1.28.0`; after startup the Studio checks the installed Winget version in the background and recommends the newest schema that client supports. Existing projects always retain their loaded `ManifestVersion` unless the user deliberately changes it.
+
 ### 3. Installers
 
 Follow the four numbered actions shown across the top:
@@ -120,6 +123,11 @@ After all four checks pass, the highlighted action becomes **Submit to Winget**.
 
 Optional diagnostics—including setup checks, signature inspection, existing-package search, Sandbox testing, and report export—remain collapsed until requested.
 
+The optional Sandbox tools provide two clearly separate choices:
+
+- **Sandbox install only** runs Microsoft's official `SandboxTest.ps1` workflow.
+- **Sandbox install + uninstall** installs the manifest, locates its Winget, Apps & Features, or MSIX identity, uninstalls it through Winget, and verifies that identity was removed. The cycle happens only inside the disposable Sandbox.
+
 ## Updating an Existing Package
 
 1. Load the folder containing the existing Winget YAML files.
@@ -132,6 +140,8 @@ Optional diagnostics—including setup checks, signature inspection, existing-pa
 8. Submit through WingetCreate.
 
 Unsupported parsed fields are preserved structurally. The original files are also copied to a timestamped `.manifest-backups` folder before any replacement.
+
+Review includes **Open backup folder** so the timestamped copies can be reached without finding the hidden folder manually. Starting another project, loading another project, or closing the Studio with unsaved edits displays a Save, Discard, or Cancel decision. This protection does not restore the removed recent-project or previous-session features.
 
 ## YAML Preservation
 
@@ -175,7 +185,7 @@ Portable EXEs cannot always be distinguished safely from normal EXE installers, 
 
 ## Interface Languages
 
-The Help & Guide page includes English and Spanish interface resources. The language choice is stored in the current Windows user's local application settings and is not written into package profiles.
+The Start and Help pages both provide a visible interface-language setting for English and Spanish. Navigation, guided actions, Review, Test Center, primary field labels, and beginner instructions are translated; manifest data, package metadata, YAML, installer output, and official Winget output are never translated or modified. The choice is stored in the current Windows user's local application settings and is not written into package profiles.
 
 ## Build from Source
 
