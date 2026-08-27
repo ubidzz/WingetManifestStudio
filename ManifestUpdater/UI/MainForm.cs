@@ -719,7 +719,7 @@ public partial class MainForm : Form
 			("Open Test Center", (_, _) => SelectTab("Test Center"))));
 		content.Controls.Add(CreateWorkflowCard("11", "Run test steps 2, 3, and 4", "Enable Local Testing requests one Windows administrator approval. Test Install Here validates again before running winget install --manifest. Verify Installation checks the Winget ID, then falls back to the exact MSI ProductCode or installed application name when Winget does not retain the local manifest ID.",
 			("Open Installation Tests", (_, _) => SelectTab("Test Center"))));
-		content.Controls.Add(CreateWorkflowCard("12", "Use Windows Sandbox when available", "Sandbox install runs Microsoft's official SandboxTest.ps1 in a disposable environment. Sandbox install + uninstall also verifies removal before the Sandbox closes. The first run can take several minutes while Microsoft dependencies are prepared.",
+		content.Controls.Add(CreateWorkflowCard("12", "Use Windows Sandbox when available", "Sandbox install runs Microsoft's official SandboxTest.ps1 in a disposable environment. Sandbox install + uninstall also verifies removal before the Sandbox closes. The first run can take several minutes while Microsoft dependencies are prepared. A manifest using elevationProhibited must use Test Install Here instead because Microsoft's Sandbox runs Winget as Administrator.",
 			("Open Sandbox Test", (_, _) => SelectTab("Test Center"))));
 		content.Controls.Add(CreateWorkflowCard("13", "Submit directly from Test Center", "After all four required tests pass, choose Submit to Winget at the bottom of the Test Center steps. It opens Microsoft's WingetCreate workflow for sign-in and pull-request creation. The GitHub token stays in Windows Credential Manager.",
 			("Open Test Center", (_, _) => SelectTab("Test Center")),
@@ -2293,12 +2293,13 @@ public partial class MainForm : Form
 			SelectTab("Test Center");
 			return;
 		}
+		ReadProjectFromControls();
+		if (ShowSandboxElevationConflict()) return;
 		if (!WingetCommandService.IsWindowsSandboxAvailable())
 		{
 			MessageBox.Show(this, "Windows Sandbox is not available. Enable the Windows Sandbox optional feature in Windows Features, restart if requested, and try again.", "Windows Sandbox unavailable", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
 		}
-		ReadProjectFromControls();
 		DialogResult answer = MessageBox.Show(this,
 			$"This will download Microsoft's official SandboxTest.ps1 from microsoft/winget-pkgs, open Windows Sandbox, and install {project.PackageIdentifier} {project.PackageVersion} inside that disposable environment. Continue?",
 			"Test in Windows Sandbox", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
@@ -2338,12 +2339,13 @@ public partial class MainForm : Form
 			SelectTab("Test Center");
 			return;
 		}
+		ReadProjectFromControls();
+		if (ShowSandboxElevationConflict()) return;
 		if (!WingetCommandService.IsWindowsSandboxAvailable())
 		{
 			MessageBox.Show(this, "Windows Sandbox is not available. Enable the Windows Sandbox optional feature in Windows Features, restart if requested, and try again.", "Windows Sandbox unavailable", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
 		}
-		ReadProjectFromControls();
 		DialogResult answer = MessageBox.Show(this,
 			$"This disposable Sandbox test will:\r\n\r\n1. Install {project.PackageIdentifier} {project.PackageVersion}.\r\n2. Confirm its Winget, Apps & Features, or MSIX identity.\r\n3. Uninstall it through Winget.\r\n4. Confirm that identity was removed.\r\n\r\nYour real Windows installation is not changed. Continue?",
 			"Sandbox install and uninstall test", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
@@ -2367,6 +2369,38 @@ public partial class MainForm : Form
 			try { ManifestService.DeleteCleanManifestFolder(cleanFolder); } catch { }
 			SetBusy(false);
 		}
+	}
+
+	private bool ShowSandboxElevationConflict()
+	{
+		if (!WingetCommandService.HasSandboxElevationConflict(project)) return false;
+
+		bool spanish = currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase);
+		string report = spanish
+			? "WINDOWS SANDBOX NO PUEDE EJECUTAR ESTE MANIFIESTO\r\n\r\n"
+				+ "POR QUÉ\r\nLa elevación está configurada como elevationProhibited. Winget debe bloquear este instalador desde una ventana de Administrador. La prueba Sandbox de Microsoft ejecuta Winget como Administrador, por lo que el instalador nunca comenzará.\r\n\r\n"
+				+ "QUÉ HACER\r\n1. Si el instalador puede ejecutarse como administrador, abre 3 Instaladores y cambia Elevación al comportamiento real: vacío, elevatesSelf o elevationRequired.\r\n2. Si el instalador realmente nunca puede ejecutarse como administrador, conserva elevationProhibited y usa Probar instalación aquí con Studio ejecutándose normalmente. La prueba Sandbox actual de Microsoft no puede probar exactamente este tipo de paquete.\r\n\r\nNo cambies el campo solo para hacer pasar una prueba. Debe describir el comportamiento real del instalador."
+			: "WINDOWS SANDBOX CANNOT RUN THIS MANIFEST\r\n\r\n"
+				+ "WHY\r\nElevation is set to elevationProhibited. Winget must block this installer from an Administrator window. Microsoft's Sandbox test runs Winget as Administrator, so the installer can never start there.\r\n\r\n"
+				+ "WHAT TO DO\r\n1. If the installer can run as administrator, open 3 Installers and set Elevation to its real behavior: blank, elevatesSelf, or elevationRequired.\r\n2. If the installer truly must never run as administrator, keep elevationProhibited and use Test Install Here while the Studio is running normally. Microsoft's current Sandbox test cannot accurately test this package type.\r\n\r\nDo not change the field only to make a test pass. It must describe the installer's real behavior.";
+		latestTestReport = report;
+		testOutputBox.Text = report;
+		SelectTab("Test Center");
+		SetStatus(spanish
+			? "Sandbox ejecuta Winget como Administrador y no admite elevationProhibited."
+			: "Sandbox runs Winget as Administrator and cannot test elevationProhibited installers.");
+
+		DialogResult openInstallers = MessageBox.Show(this,
+			report + (spanish ? "\r\n\r\n¿Abrir 3 Instaladores ahora?" : "\r\n\r\nOpen 3 Installers now?"),
+			spanish ? "Conflicto de elevación en Sandbox" : "Sandbox elevation conflict",
+			MessageBoxButtons.YesNo,
+			MessageBoxIcon.Warning);
+		if (openInstallers == DialogResult.Yes)
+		{
+			SelectTab("Installers & Hashes");
+			if (fields.TryGetValue("ElevationRequirement", out Control? elevationField)) elevationField.Focus();
+		}
+		return true;
 	}
 
 	private async Task<string> CreateValidatedTestFolderAsync()
@@ -3947,7 +3981,7 @@ public partial class MainForm : Form
 			"Scope" => "Optional shared scope; choose user for one account, machine for the whole computer, or leave blank when it varies by installer",
 			"InstallModes" => "Supported modes separated with commas: interactive, silent, silentWithProgress",
 			"UpgradeBehavior" => "Optional instruction for upgrades; leave blank unless the installer requires a specific behavior",
-			"ElevationRequirement" => "Whether the installer requires elevation; leave blank when unknown",
+			"ElevationRequirement" => "Choose elevationRequired when admin is always required, elevatesSelf when the installer decides, or elevationProhibited only when admin must be blocked; elevationProhibited cannot run in Microsoft's Administrator-based Sandbox test",
 			"Protocols" => "URL protocols registered by the app, separated with commas",
 			"FileExtensions" => "File extensions registered by the app, separated with commas and without dots",
 			"UnsupportedOSArchitectures" => "Architectures that cannot use this installer, separated with commas",
@@ -4413,6 +4447,9 @@ public partial class MainForm : Form
 			Record(insecureUrlCheck.Checked != originalHttpSetting, "HTTP URL toggle changes between off and on");
 			insecureUrlCheck.Checked = originalHttpSetting;
 			SelectTab("Installers & Hashes");
+			Record(fields.TryGetValue("ElevationRequirement", out Control? elevationControl)
+				&& elevationControl.AccessibleDescription?.Contains("Administrator-based Sandbox", StringComparison.OrdinalIgnoreCase) == true,
+				"Elevation guidance explains the elevationProhibited Sandbox limitation before testing");
 			Size sizeBeforeSharedSettingsCheck = Size;
 			Size minimumSizeBeforeSharedSettingsCheck = MinimumSize;
 			MinimumSize = Size.Empty;

@@ -212,6 +212,10 @@ internal static class WingetCommandService
 		// process, then invoke Microsoft's script within that same process.
 		const string sandboxCommand = """
 			$ErrorActionPreference = 'Stop'
+			# Windows PowerShell 5.1 otherwise asks to initialize Internet Explorer's
+			# legacy parsing engine when SandboxTest.ps1 checks release URLs. Basic
+			# parsing is non-interactive and is scoped to this disposable child process.
+			$global:PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true
 			try {
 			    $source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:WMS_SANDBOX_VERIFICATION_SCRIPT))
 			    $verification = [ScriptBlock]::Create($source)
@@ -223,7 +227,7 @@ internal static class WingetCommandService
 			    if (-not $?) { exit 1 }
 			    exit 0
 			} catch {
-			    Write-Error ($_ | Out-String)
+			    [Console]::Error.WriteLine('Sandbox test failed: ' + $_.Exception.Message)
 			    exit 1
 			}
 			""";
@@ -235,6 +239,8 @@ internal static class WingetCommandService
 			"-NoProfile",
 			"-ExecutionPolicy",
 			"Bypass",
+			"-OutputFormat",
+			"Text",
 			"-EncodedCommand",
 			encodedCommand
 		];
@@ -452,6 +458,14 @@ internal static class WingetCommandService
 	{
 		string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
 		return File.Exists(Path.Combine(windows, "System32", "WindowsSandbox.exe"));
+	}
+
+	internal static bool HasSandboxElevationConflict(ManifestProject project)
+	{
+		return string.Equals(
+			project.ElevationRequirement,
+			"elevationProhibited",
+			StringComparison.OrdinalIgnoreCase);
 	}
 
 	public static Task<CommandResult> InstallWingetCreateAsync(CancellationToken cancellationToken = default)

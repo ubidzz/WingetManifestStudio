@@ -618,6 +618,13 @@ ManifestVersion: 1.12.0
 			&& currentSchema.Files.Values.All(yaml => yaml.Contains("ManifestVersion: 1.28.0", StringComparison.Ordinal)
 				&& yaml.Contains(".1.28.0.schema.json", StringComparison.Ordinal)),
 			"A new package must generate every manifest against the selected current schema.");
+		project.ElevationRequirement = "elevationProhibited";
+		Assert(WingetCommandService.HasSandboxElevationConflict(project),
+			"Sandbox tests must stop before launch when Winget would block an elevationProhibited installer from Microsoft's Administrator session.");
+		project.ElevationRequirement = "elevatesSelf";
+		Assert(!WingetCommandService.HasSandboxElevationConflict(project),
+			"Sandbox tests must remain available for installers that elevate themselves.");
+		project.ElevationRequirement = string.Empty;
 		string script = WingetCommandService.BuildSandboxInstallUninstallScript(project, "safe-result.txt");
 		Assert(script.Contains("winget.exe uninstall", StringComparison.OrdinalIgnoreCase)
 			&& script.Contains("STATUS=", StringComparison.Ordinal)
@@ -626,6 +633,24 @@ ManifestVersion: 1.12.0
 			&& !script.Contains(project.PackageIdentifier, StringComparison.Ordinal)
 			&& !script.Contains(project.PackageName, StringComparison.Ordinal),
 			"The disposable uninstall script must verify removal and encode package-specific values instead of injecting them into PowerShell.");
+		const string officialSandboxSample = """
+			$response = Invoke-WebRequest -Uri $URL -Method Head -ErrorAction SilentlyContinue
+			Write-Warning @"
+			A valid GitHub token was not provided. You may encounter API rate limits.
+			Please consider adding your token using the WINGET_PKGS_GITHUB_TOKEN environment variable.
+			"@
+			Write-Warning 'A different useful warning'
+			$Script | Out-File -Path (Join-Path $script:TestDataFolder -ChildPath 'BoundParameterScript.ps1')
+			""";
+		string compatibleSandboxSample = OfficialTestAssets.CreateSandboxCompatibilityScript(officialSandboxSample);
+		Assert(compatibleSandboxSample.Contains("Invoke-WebRequest -UseBasicParsing -Uri", StringComparison.Ordinal)
+			&& compatibleSandboxSample.Contains("[System.IO.File]::WriteAllText", StringComparison.Ordinal)
+			&& compatibleSandboxSample.Contains("$Script.ToString()", StringComparison.Ordinal)
+			&& !compatibleSandboxSample.Contains("$Script | Out-File", StringComparison.Ordinal)
+			&& compatibleSandboxSample.Contains("Write-Verbose @\"", StringComparison.Ordinal)
+			&& compatibleSandboxSample.Contains("A valid GitHub token was not provided.", StringComparison.Ordinal)
+			&& compatibleSandboxSample.Contains("Write-Warning 'A different useful warning'", StringComparison.Ordinal),
+			"The official Sandbox compatibility copy must avoid legacy web prompts, repair the invalid Out-File parameter, and suppress only the optional token warning.");
 		ProcessStartInfo parserStartInfo = new()
 		{
 			FileName = "powershell.exe",
@@ -650,20 +675,32 @@ ManifestVersion: 1.12.0
 		{
 			string manifestFolder = Path.Combine(binderRoot, "manifest");
 			string fakeSandboxTool = Path.Combine(binderRoot, "SandboxTest.ps1");
-			string receivedScriptPath = Path.Combine(binderRoot, "received-script.txt");
+			string receivedScriptPath = Path.Combine(binderRoot, "BoundParameterScript.ps1");
 			string receivedTypePath = Path.Combine(binderRoot, "received-type.txt");
+			string basicParsingPath = Path.Combine(binderRoot, "basic-parsing.txt");
 			Directory.CreateDirectory(manifestFolder);
-			File.WriteAllText(fakeSandboxTool, """
+			string fakeOfficialSandboxTool = """
 				[CmdletBinding()]
 				param(
 				    [string] $Manifest,
 				    [ScriptBlock] $Script,
 				    [string] $MapFolder
 				)
-				[IO.File]::WriteAllText((Join-Path $MapFolder 'received-script.txt'), $Script.ToString(), [Text.UTF8Encoding]::new($false))
+				function Invoke-WebRequest {
+				    [CmdletBinding()]
+				    param([switch] $UseBasicParsing)
+				    return $UseBasicParsing.IsPresent
+				}
+				$script:TestDataFolder = $MapFolder
+				$Script | Out-File -Path (Join-Path $script:TestDataFolder -ChildPath 'BoundParameterScript.ps1')
 				[IO.File]::WriteAllText((Join-Path $MapFolder 'received-type.txt'), $Script.GetType().FullName, [Text.UTF8Encoding]::new($false))
+				[IO.File]::WriteAllText((Join-Path $MapFolder 'basic-parsing.txt'), (Invoke-WebRequest).ToString(), [Text.UTF8Encoding]::new($false))
 				exit 0
-				""", new UTF8Encoding(false));
+				""";
+			File.WriteAllText(
+				fakeSandboxTool,
+				OfficialTestAssets.CreateSandboxCompatibilityScript(fakeOfficialSandboxTool),
+				new UTF8Encoding(false));
 			SandboxPowerShellInvocation invocation = WingetCommandService.CreateSandboxInstallUninstallInvocation(
 				fakeSandboxTool,
 				manifestFolder,
@@ -697,8 +734,9 @@ ManifestVersion: 1.12.0
 			Assert(binder.ExitCode == 0
 				&& File.Exists(receivedScriptPath)
 				&& File.ReadAllText(receivedScriptPath) == script
-				&& File.ReadAllText(receivedTypePath) == "System.Management.Automation.ScriptBlock",
-				"Microsoft's SandboxTest.ps1 must receive a real ScriptBlock. " + binderOutput + binderError);
+				&& File.ReadAllText(receivedTypePath) == "System.Management.Automation.ScriptBlock"
+				&& File.ReadAllText(basicParsingPath).Equals("True", StringComparison.OrdinalIgnoreCase),
+				"Microsoft's SandboxTest.ps1 must receive a real ScriptBlock and non-interactive web parsing. " + binderOutput + binderError);
 		}
 		finally
 		{
