@@ -406,7 +406,24 @@ ManifestVersion: 1.12.0
 			"Font package identifiers must map to the separate official fonts repository root.");
 		Assert(StudioLocalization.Translate("Test Center", "es-ES") == "Centro de pruebas", "Spanish interface resources must be available.");
 		Assert(StudioLocalization.Translate("Test Center", "en-US") == "Test Center", "English must remain the fallback interface language.");
-		results.Add("PASS: repository discovery path and English/Spanish localization resources.");
+		Dictionary<string, string> additionalLanguages = new(StringComparer.OrdinalIgnoreCase)
+		{
+			["fr-FR"] = "Centre de tests",
+			["de-DE"] = "Testcenter",
+			["pt-BR"] = "Central de testes",
+			["ja-JP"] = "テストセンター"
+		};
+		Assert(StudioLocalization.AvailableLanguages.Count == 6, "The language selector must offer all six supported interface languages.");
+		foreach ((string language, string expectedTestCenter) in additionalLanguages)
+		{
+			Assert(StudioLocalization.IsSupported(language)
+				&& StudioLocalization.Translate("Test Center", language) == expectedTestCenter
+				&& StudioLocalization.Translate("Package identifier", language) != "Package identifier"
+				&& StudioLocalization.Translate("Check for updates", language) != "Check for updates"
+				&& StudioLocalization.Translate("Required. Package identifier", language) != "Required. Package identifier",
+				$"Core interface and required-field guidance must be translated for {language}.");
+		}
+		results.Add("PASS: English, Spanish, French, German, Brazilian Portuguese, and Japanese localization resources.");
 	}
 
 	private static void TestAuthenticodeInspection(string root, List<string> results)

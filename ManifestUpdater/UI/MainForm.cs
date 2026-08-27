@@ -305,11 +305,11 @@ public partial class MainForm : Form
 		if (!ConfirmSaveOrDiscardChanges("install the Studio update")) return;
 
 		string distributionText = studioDistribution == StudioDistributionKind.MsiInstalled
-			? "StudioSetup.msi will update the installed copy."
-			: "The new portable EXE will replace this file after the Studio closes. A backup is restored automatically if replacement fails.";
-		string confirmation = currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase)
-			? $"Winget Manifest Studio {release.VersionText} está disponible.\r\n\r\nArchivo: {release.Asset.Name} ({FormatSize(release.Asset.Size)})\r\n{(studioDistribution == StudioDistributionKind.MsiInstalled ? "StudioSetup.msi actualizará la copia instalada." : "El nuevo EXE portátil reemplazará este archivo después de cerrar Studio. Si falla, se restaurará una copia de seguridad.")}\r\n\r\n¿Descargar e instalar ahora?"
-			: $"Winget Manifest Studio {release.VersionText} is available.\r\n\r\nFile: {release.Asset.Name} ({FormatSize(release.Asset.Size)})\r\n{distributionText}\r\n\r\nDownload and install it now?";
+			? T("StudioSetup.msi will update the installed copy.")
+			: T("The new portable EXE will replace this file after the Studio closes. A backup is restored automatically if replacement fails.");
+		string confirmation = string.Format(T("Winget Manifest Studio {0} is available."), release.VersionText)
+			+ "\r\n\r\n" + string.Format(T("File: {0} ({1})"), release.Asset.Name, FormatSize(release.Asset.Size))
+			+ "\r\n" + distributionText + "\r\n\r\n" + T("Download and install it now?");
 		if (MessageBox.Show(this, confirmation, T("Install Studio update?"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
 		SetBusy(true, T("Downloading the verified Studio update from GitHub..."));
@@ -4930,8 +4930,9 @@ public partial class MainForm : Form
 			Record(HasUnsavedChanges(), "Unsaved project edits are detected before replacement or close");
 			Write("ReleaseNotes", originalReleaseNotes);
 			MarkProjectClean();
-			Record(languageBoxes.Count == 2 && languageBoxes.All(selector => selector.Items.Count == StudioLocalization.AvailableLanguages.Count),
-				"Language settings are visible on Start and Help");
+			Record(languageBoxes.Count == 2 && StudioLocalization.AvailableLanguages.Count == 6
+				&& languageBoxes.All(selector => selector.Items.Count == StudioLocalization.AvailableLanguages.Count),
+				"Language settings on Start and Help offer all six interface languages");
 			ApplyInterfaceLanguage("es-ES");
 			Record(navigationButtons["Start Here"].Text.Contains("Inicio", StringComparison.Ordinal)
 				&& reviewProgressSteps[0].Title == "Vista previa"
@@ -4943,6 +4944,26 @@ public partial class MainForm : Form
 				&& previewBox.Text.StartsWith("QUÉ REQUIERE ATENCIÓN", StringComparison.Ordinal)
 				&& Descendants(this).OfType<Label>().Any(label => label.Text.StartsWith("Dependencias del paquete", StringComparison.Ordinal)),
 				"Spanish translates navigation, package fields, installer columns, Review, and Test Center");
+			Dictionary<string, string> additionalNavigation = new(StringComparer.OrdinalIgnoreCase)
+			{
+				["fr-FR"] = "Centre de tests",
+				["de-DE"] = "Testcenter",
+				["pt-BR"] = "Central de testes",
+				["ja-JP"] = "テストセンター"
+			};
+			foreach ((string language, string expectedTestCenter) in additionalNavigation)
+			{
+				ApplyInterfaceLanguage(language);
+				PerformLayout();
+				workspaceTabs.PerformLayout();
+				Record(navigationButtons["Test Center"].Text.Contains(expectedTestCenter, StringComparison.Ordinal)
+					&& studioUpdateButton.Text != "Check for updates"
+					&& installerGrid.Columns[nameof(InstallerArtifact.InstallerUrl)] is DataGridViewColumn translatedInstallerUrlColumn
+					&& translatedInstallerUrlColumn.HeaderText != "PUBLIC INSTALLER URL"
+					&& languageBoxes.All(selector => selector.SelectedIndex == StudioLocalization.IndexOf(language))
+					&& navigationButtons.Values.All(button => button.Right <= navigationPanel.ClientSize.Width),
+					$"{StudioLocalization.AvailableLanguages[StudioLocalization.IndexOf(language)].DisplayName} translates core workflows and fits the interface");
+			}
 			ApplyInterfaceLanguage("en-US");
 			Record(navigationButtons["Start Here"].Text == "1  Start" && studioUpdateButton.Text == "Check for updates" && reviewProgressSteps[0].Title == "Preview"
 				&& reviewActionDescriptionLabel.Text.StartsWith("Package Version", StringComparison.Ordinal)
@@ -5105,7 +5126,8 @@ public partial class MainForm : Form
 		string language = StudioLocalization.CodeAt(source.SelectedIndex);
 		StudioStateStore.SetLanguage(language);
 		ApplyInterfaceLanguage(language);
-		SetStatus(language == "es-ES" ? "Idioma cambiado a Español." : "Language changed to English.");
+		string displayName = StudioLocalization.AvailableLanguages[StudioLocalization.IndexOf(language)].DisplayName;
+		SetStatus(string.Format(T("Interface language changed to {0}."), displayName));
 	}
 
 	private void ApplyInterfaceLanguage(string language)

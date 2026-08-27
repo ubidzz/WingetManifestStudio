@@ -5,7 +5,11 @@ internal static class StudioLocalization
 	public static readonly IReadOnlyList<StudioLanguage> AvailableLanguages =
 	[
 		new("en-US", "English"),
-		new("es-ES", "Español")
+		new("es-ES", "Español"),
+		new("fr-FR", "Français"),
+		new("de-DE", "Deutsch"),
+		new("pt-BR", "Português (Brasil)"),
+		new("ja-JP", "日本語")
 	];
 
 	private static readonly Dictionary<string, string> Spanish = new(StringComparer.Ordinal)
@@ -300,6 +304,12 @@ internal static class StudioLocalization
 		["Updates are checked quietly after the Studio opens. You can also check now."] = "Las actualizaciones se comprueban en segundo plano después de abrir Studio. También puedes comprobar ahora.",
 		["Check for updates"] = "Buscar actualizaciones",
 		["Install Studio update?"] = "¿Instalar la actualización de Studio?",
+		["Winget Manifest Studio {0} is available."] = "Winget Manifest Studio {0} está disponible.",
+		["File: {0} ({1})"] = "Archivo: {0} ({1})",
+		["StudioSetup.msi will update the installed copy."] = "StudioSetup.msi actualizará la copia instalada.",
+		["The new portable EXE will replace this file after the Studio closes. A backup is restored automatically if replacement fails."] = "El nuevo EXE portátil reemplazará este archivo después de cerrar Studio. Si falla, se restaurará una copia de seguridad.",
+		["Download and install it now?"] = "¿Descargar e instalar ahora?",
+		["Interface language changed to {0}."] = "Idioma de la interfaz cambiado a {0}.",
 		["Downloading the verified Studio update from GitHub..."] = "Descargando desde GitHub la actualización verificada de Studio...",
 		["Downloading... {0}%"] = "Descargando... {0}%",
 		["Downloading and checking {0}: {1}%"] = "Descargando y comprobando {0}: {1}%",
@@ -528,20 +538,24 @@ internal static class StudioLocalization
 
 	public static string Translate(string english, string language)
 	{
-		if (!language.Equals("es-ES", StringComparison.OrdinalIgnoreCase)) return english;
-		if (Spanish.TryGetValue(english, out string? translated)) return translated;
-		foreach ((string EnglishPrefix, string SpanishPrefix) in new[]
+		IReadOnlyDictionary<string, string>? translations = language.Equals("es-ES", StringComparison.OrdinalIgnoreCase)
+			? Spanish
+			: StudioAdditionalTranslations.Get(language);
+		if (translations is null) return english;
+		if (translations.TryGetValue(english, out string? translated)) return translated;
+		(string requiredPrefix, string optionalPrefix, string requiredWord) = StudioAdditionalTranslations.Grammar(language);
+		foreach ((string EnglishPrefix, string LocalizedPrefix) in new[]
 		{
-			("Required. ", "Obligatorio. "),
-			("Optional. ", "Opcional. ")
+			("Required. ", requiredPrefix),
+			("Optional. ", optionalPrefix)
 		})
 		{
 			if (!english.StartsWith(EnglishPrefix, StringComparison.Ordinal)) continue;
 			string body = english[EnglishPrefix.Length..];
 			bool period = body.EndsWith(".", StringComparison.Ordinal);
 			if (period) body = body[..^1];
-			string localizedBody = Spanish.GetValueOrDefault(body, body);
-			return SpanishPrefix + localizedBody + (period ? "." : string.Empty);
+			string localizedBody = translations.GetValueOrDefault(body, body);
+			return LocalizedPrefix + localizedBody + (period ? "." : string.Empty);
 		}
 		int prefixLength = 0;
 		while (prefixLength < english.Length && char.IsDigit(english[prefixLength])) prefixLength++;
@@ -549,19 +563,19 @@ internal static class StudioLocalization
 		{
 			while (prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength])) prefixLength++;
 			string action = english[prefixLength..];
-			if (Spanish.TryGetValue(action, out translated)) return english[..prefixLength] + translated;
+			if (translations.TryGetValue(action, out translated)) return english[..prefixLength] + translated;
 		}
 		const string requiredSuffix = "  * Required";
 		if (english.EndsWith(requiredSuffix, StringComparison.Ordinal))
 		{
 			string field = english[..^requiredSuffix.Length];
-			return Spanish.GetValueOrDefault(field, field) + "  * Obligatorio";
+			return translations.GetValueOrDefault(field, field) + "  * " + requiredWord;
 		}
 		const string requiredMarker = " *";
 		if (english.EndsWith(requiredMarker, StringComparison.Ordinal))
 		{
 			string field = english[..^requiredMarker.Length];
-			return Spanish.GetValueOrDefault(field, field) + requiredMarker;
+			return translations.GetValueOrDefault(field, field) + requiredMarker;
 		}
 		return english;
 	}
