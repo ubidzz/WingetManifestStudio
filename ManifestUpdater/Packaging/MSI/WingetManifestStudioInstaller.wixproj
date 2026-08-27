@@ -1,7 +1,7 @@
 <Project Sdk="WixToolset.Sdk/7.0.0">
   <PropertyGroup>
     <OutputType>Package</OutputType>
-    <OutputName>SynixStudioSetup</OutputName>
+    <OutputName>StudioSetup</OutputName>
     <OutputPath>$(MSBuildThisFileDirectory)bin\$(Configuration)\</OutputPath>
     <InstallerPlatform>x64</InstallerPlatform>
     <AcceptEula>wix7</AcceptEula>

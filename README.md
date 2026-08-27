@@ -38,7 +38,7 @@ WingetCreate is only required for its official commands and submission workflow.
 
 ## Install
 
-Download `SynixStudioSetup.msi` from the repository's [Releases](https://github.com/ubidzz/WingetManifestStudio/releases) page and run it normally. Administrator permission is not required to edit manifests. Windows may request approval only for operations that inherently require elevation, such as enabling Winget local-manifest testing or running an installer that requires it.
+Download `StudioSetup.msi` from the repository's [Releases](https://github.com/ubidzz/WingetManifestStudio/releases) page and run it normally. Administrator permission is not required to edit manifests. Windows may request approval only for operations that inherently require elevation, such as enabling Winget local-manifest testing or running an installer that requires it.
 
 The published setup is intentionally framework-dependent and does **not** bundle the .NET 10 framework. Install the Microsoft .NET 10 Desktop Runtime x64 if Windows reports that the runtime is missing.
 
@@ -195,9 +195,9 @@ These checks build the application only. They do not change or invoke the Visual
 Visual Studio Publish and normal `dotnet publish` runs automatically build:
 
 - `WingetManifestStudio.exe`
-- `SynixStudioSetup.msi`
+- `StudioSetup.msi`
 
-The MSI is always named `SynixStudioSetup.msi`. It contains the framework-dependent application payload and requires the Microsoft .NET 10 Desktop Runtime x64; it does not package the framework itself.
+The MSI is always named `StudioSetup.msi`. It contains the framework-dependent application payload and requires the Microsoft .NET 10 Desktop Runtime x64; it does not package the framework itself.
 
 Example framework-dependent single-file publish:
 

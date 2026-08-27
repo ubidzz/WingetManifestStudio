@@ -55,7 +55,7 @@ dotnet build ManifestUpdater/WingetManifestStudio.csproj -c Release
 - Keep authentication in WingetCreate and Windows Credential Manager.
 - Do not hardcode personal folder paths.
 - Do not change publish profiles unless the contribution specifically addresses publishing and explains the reason.
-- The setup file must remain named `SynixStudioSetup.msi`.
+- The setup file must remain named `StudioSetup.msi`.
 
 ## Coding Style
 

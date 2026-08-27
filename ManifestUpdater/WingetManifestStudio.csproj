@@ -50,8 +50,8 @@
       <_StudioMsiIntermediateDirectory>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'obj', 'MsiBuildIntermediate'))</_StudioMsiIntermediateDirectory>
       <_StudioMsiBuildOutputDirectory>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'obj', 'MsiBuildOutput'))</_StudioMsiBuildOutputDirectory>
       <_StudioMsiProject>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'Packaging', 'MSI', 'WingetManifestStudioInstaller.wixproj'))</_StudioMsiProject>
-      <_StudioMsiBuildOutput>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'Packaging', 'MSI', 'bin', 'Release', 'SynixStudioSetup.msi'))</_StudioMsiBuildOutput>
-      <_StudioMsiOutput>$([System.IO.Path]::Combine('$(_StudioPublishDirectory)', 'SynixStudioSetup.msi'))</_StudioMsiOutput>
+      <_StudioMsiBuildOutput>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'Packaging', 'MSI', 'bin', 'Release', 'StudioSetup.msi'))</_StudioMsiBuildOutput>
+      <_StudioMsiOutput>$([System.IO.Path]::Combine('$(_StudioPublishDirectory)', 'StudioSetup.msi'))</_StudioMsiOutput>
       <_StudioDotNetHost Condition="'$(DotNetHostPath)' != ''">$(DotNetHostPath)</_StudioDotNetHost>
       <_StudioDotNetHost Condition="'$(_StudioDotNetHost)' == '' and '$(ProgramW6432)' != ''">$([System.IO.Path]::Combine('$(ProgramW6432)', 'dotnet', 'dotnet.exe'))</_StudioDotNetHost>
       <_StudioDotNetHost Condition="'$(_StudioDotNetHost)' == ''">$([System.IO.Path]::Combine('$(ProgramFiles)', 'dotnet', 'dotnet.exe'))</_StudioDotNetHost>
@@ -87,14 +87,14 @@
     <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
       Command="&quot;$(_StudioSignTool)&quot; verify /pa /all &quot;$(_StudioMsiPayloadExe)&quot;" />
 
-    <Message Text="Building SynixStudioSetup.msi with Version $(Version) from the isolated MSI payload..." Importance="high" />
+    <Message Text="Building StudioSetup.msi with Version $(Version) from the isolated MSI payload..." Importance="high" />
     <Delete Files="$(_StudioMsiBuildOutput)" Condition="Exists('$(_StudioMsiBuildOutput)')" />
     <Exec
       Command="&quot;$(_StudioDotNetHost)&quot; build &quot;$(_StudioMsiProject)&quot; --configuration Release --no-incremental --nologo &quot;-p:Version=$(Version)&quot; &quot;-p:StudioPublishDir=$(_StudioMsiPayloadDirectory)&quot; &quot;-p:StudioProjectDir=$(MSBuildProjectDirectory)&quot; &quot;-p:StudioAssemblyName=$(AssemblyName)&quot;"
       WorkingDirectory="$(MSBuildProjectDirectory)" />
 
     <Error Condition="!Exists('$(_StudioMsiBuildOutput)')" Text="WiX did not create $(_StudioMsiBuildOutput)." />
-    <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing SynixStudioSetup.msi..." Importance="high" />
+    <Message Condition="'$(_StudioSigningEnabled)' == 'true'" Text="Signing StudioSetup.msi..." Importance="high" />
     <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
       Command="&quot;$(_StudioSignTool)&quot; sign /sha1 &quot;$(StudioSigningCertificateThumbprint)&quot; /fd SHA256 /td SHA256 /tr &quot;$(StudioTimestampUrl)&quot; &quot;$(_StudioMsiBuildOutput)&quot;" />
     <Exec Condition="'$(_StudioSigningEnabled)' == 'true'"
