@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest a focused improvement that makes Winget publishing easier or safer.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is difficult today?
+      description: Describe the user problem before describing a solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would make it easier?
+      description: Explain the step-by-step behavior you would like to see.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area should improve?
+      options:
+        - 1 Start
+        - 2 Package
+        - 3 Installers
+        - 4 Review
+        - 5 Test Center
+        - Help and guidance
+        - Publishing and setup
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds tried
+      description: Tell us how you handle this today, if applicable.

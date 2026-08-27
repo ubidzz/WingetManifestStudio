@@ -1,0 +1,95 @@
+name: Build and test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Windows build and app tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: ManifestUpdater/WingetManifestStudio.csproj
+
+      - name: Restore and audit dependencies
+        shell: pwsh
+        run: >-
+          dotnet restore WingetManifestStudio.slnx
+          -p:NuGetAudit=true
+          -p:NuGetAuditMode=all
+          -p:WarningsAsErrors=NU1901%3BNU1902%3BNU1903%3BNU1904
+
+      - name: Build release configuration
+        shell: pwsh
+        run: >-
+          dotnet build ManifestUpdater/WingetManifestStudio.csproj
+          --configuration Release
+          --no-restore
+          --warnaserror
+          -p:BuildStudioMsi=false
+
+      - name: Run functional, interface, and startup checks
+        shell: pwsh
+        run: |
+          $studioExe = Resolve-Path "ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe"
+
+          function Invoke-StudioCheck([string] $argument, [string] $displayName) {
+            $process = Start-Process `
+              -FilePath $studioExe `
+              -ArgumentList $argument `
+              -WindowStyle Hidden `
+              -Wait `
+              -PassThru
+
+            if ($process.ExitCode -ne 0) {
+              throw "$displayName failed with exit code $($process.ExitCode)."
+            }
+          }
+
+          Invoke-StudioCheck "--self-test" "Functional self-test"
+          Invoke-StudioCheck "--ui-self-test" "Off-screen interface self-test"
+          Invoke-StudioCheck "--startup-probe" "Startup probe"
+
+          $startupFile = "ManifestUpdater/bin/Release/net10.0-windows/startup-probe.txt"
+          if (-not (Test-Path -LiteralPath $startupFile)) {
+            throw "The startup probe did not create its timing result."
+          }
+
+          $startupMilliseconds = [int](Get-Content -Raw -LiteralPath $startupFile)
+          Write-Host "First-window startup: $startupMilliseconds ms"
+          if ($startupMilliseconds -gt 15000) {
+            throw "Startup took $startupMilliseconds ms, which exceeds the 15-second regression limit."
+          }
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-test-evidence
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ManifestUpdater/bin/Release/net10.0-windows/self-test-report.txt
+            ManifestUpdater/bin/Release/net10.0-windows/ui-self-test-report.txt
+            ManifestUpdater/bin/Release/net10.0-windows/startup-probe.txt
+            ManifestUpdater/bin/Release/net10.0-windows/ui-*.png

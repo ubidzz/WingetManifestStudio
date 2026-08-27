@@ -1,5 +1,9 @@
 # Winget Manifest Studio
 
+[![Build and test](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/quality.yml/badge.svg)](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/quality.yml)
+[![CodeQL](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/codeql.yml/badge.svg)](https://github.com/ubidzz/WingetManifestStudio/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-20d4cb.svg)](LICENSE)
+
 Winget Manifest Studio is a Windows desktop application for creating, updating, validating, testing, and submitting Windows Package Manager manifests without editing YAML by hand.
 
 It is designed for first-time package publishers while retaining the controls experienced maintainers need. Microsoft WingetCreate remains responsible for official authentication and submission.
@@ -172,6 +176,19 @@ Run the automated functional and off-screen interface tests without opening visi
 ./ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe --ui-self-test
 ./ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe --startup-probe
 ```
+
+## Automated Repository Checks
+
+Every push and pull request to `master` runs a clean Windows build followed by the functional self-test, off-screen interface test, and startup probe. The startup check rejects a first-window time above 15 seconds so major launch-time regressions cannot pass unnoticed. Test reports and off-screen screenshots are retained with each workflow run.
+
+Repository security automation also includes:
+
+- CodeQL C# analysis on pushes, pull requests, a weekly schedule, and manual runs.
+- NuGet auditing during every build, with known vulnerability warnings treated as errors.
+- Dependency Review on pull requests, rejecting newly introduced moderate-or-higher vulnerabilities.
+- Weekly Dependabot updates for NuGet packages and GitHub Actions.
+
+These checks build the application only. They do not change or invoke the Visual Studio publish profiles and do not create an MSI during CI.
 
 ## Publish
 
