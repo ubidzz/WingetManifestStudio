@@ -14,7 +14,9 @@ It is designed for first-time package publishers while retaining the controls ex
 - Load and safely update an existing manifest folder.
 - Preserve parsed custom and unsupported YAML fields.
 - Calculate SHA-256 hashes from local release files.
-- Read supported MSI ProductCode and UpgradeCode values.
+- Read supported MSI ProductCode, UpgradeCode, architecture, and install-scope values.
+- Discover supported installer files inside ZIP packages and generate `NestedInstallerFiles` entries.
+- Treat each installer row independently, including mixed architectures, installer technologies, and scopes.
 - Inspect Authenticode and MSIX/APPX signature information.
 - Verify that public download URLs match attached local files.
 - Preview changes without writing files.
@@ -73,12 +75,14 @@ Every field includes beginner guidance. Uncommon schema fields are available und
 
 Follow the four numbered actions shown across the top:
 
-1. **Add Release Files** — select the exact local MSI, EXE, MSIX, APPX, bundle, ZIP, portable package, or other supported release file.
+1. **Add Release Files** — select the exact local MSI, EXE, MSIX, APPX, bundle, ZIP, portable application, or font release file.
 2. **Enter Public URL** — paste the direct public HTTPS download link into the selected installer row.
 3. **Inspect & Fill Selected** — calculate the hash and read supported installer metadata.
 4. **Verify Public URLs** — download each published file temporarily and prove that it matches the attached local file and SHA-256.
 
-Use one installer row for each architecture or installer variation. A release webpage is not an installer URL; use the direct release-asset URL.
+Use one installer row for each architecture or installer variation. The Studio does not assume that every package is x64 or that every row uses the same installer technology. A release webpage is not an installer URL; use the direct release-asset URL.
+
+MSI files can provide the product name, publisher, version, ProductCode, UpgradeCode, architecture, and install scope. EXE metadata is used only to fill empty package fields; inspection never replaces a package name, publisher, or release version you already entered. ZIP rows show the detected files inside the archive. Review the nested type and paths before saving, especially when a ZIP contains more than one executable.
 
 ### 4. Review
 
@@ -128,6 +132,8 @@ Existing manifests are parsed as YAML document trees. The update process preserv
 
 Installer rows are matched using stable values such as ProductCode, URL, architecture, installer type, and scope instead of relying only on row position.
 
+Optional root-level installer defaults remain optional. If an existing manifest stores type or scope on individual installer rows, loading and previewing do not invent a new root default. This allows mixed MSI/EXE/MSIX packages and different per-user or per-machine installers to remain structurally accurate.
+
 There are two intentional limitations:
 
 - Comments and hand-formatted spacing are not schema data and may be normalized when edited YAML is emitted.
@@ -147,7 +153,17 @@ There are two intentional limitations:
 
 ## Supported Installer Formats
 
-Guided support includes MSI, WiX, EXE, Burn, Inno Setup, Nullsoft, MSIX, APPX, bundles, ZIP, portable packages, and fonts. Advanced mappings provide access to uncommon Winget installer fields when a package needs them.
+Guided authoring support includes MSI, WiX, EXE, Burn, Inno Setup, Nullsoft, MSIX, APPX, bundles, ZIP, PWA, portable packages, and fonts. Supported architectures are x86, x64, ARM, ARM64, and neutral. Advanced mappings provide access to uncommon Winget installer fields when a package needs them.
+
+Portable EXEs cannot always be distinguished safely from normal EXE installers, so the detected type remains editable. Font packages use the separate `fonts` root in microsoft/winget-pkgs and are subject to stricter submission availability. PWA support can vary by Winget client and repository policy. The Studio warns about these cases and leaves final validation and submission decisions to Microsoft's current Winget and WingetCreate tools.
+
+## Package and Computer Independence
+
+- No publisher, package name, version, manifest folder, release URL, or installer architecture is fixed in the authoring workflow.
+- New projects start with package-specific installer defaults blank. Inspection fills each installer row from the selected file, and the user can correct metadata that cannot be determined safely.
+- Profiles store project data but no credentials. When a profile is moved to another Windows account or computer, missing local files are reported and can be reattached without losing public URLs or saved metadata.
+- Runtime files use Windows-provided application-data and temporary folders instead of a personal user path.
+- Existing YAML controls the loaded project. Optional values that were absent are not silently added during preview.
 
 ## Interface Languages
 

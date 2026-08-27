@@ -33,13 +33,14 @@ public sealed class ManifestProject
 	public string InstallationNotes { get; set; } = string.Empty;
 	public string Channel { get; set; } = string.Empty;
 	public string InstallerLocale { get; set; } = string.Empty;
-	public string Platform { get; set; } = "Windows.Desktop";
+	public string Platform { get; set; } = string.Empty;
 	public string MinimumOSVersion { get; set; } = string.Empty;
-	public string InstallerType { get; set; } = "exe";
+	public string InstallerType { get; set; } = string.Empty;
 	public string NestedInstallerType { get; set; } = string.Empty;
-	public string Scope { get; set; } = "user";
-	public string InstallModes { get; set; } = "interactive, silent, silentWithProgress";
-	public string UpgradeBehavior { get; set; } = "install";
+	public string NestedInstallerFiles { get; set; } = string.Empty;
+	public string Scope { get; set; } = string.Empty;
+	public string InstallModes { get; set; } = string.Empty;
+	public string UpgradeBehavior { get; set; } = string.Empty;
 	public string ElevationRequirement { get; set; } = string.Empty;
 	public string SwitchSilent { get; set; } = string.Empty;
 	public string SwitchSilentWithProgress { get; set; } = string.Empty;
@@ -80,8 +81,10 @@ public sealed class InstallerArtifact : INotifyPropertyChanged
 {
 	private string localFile = string.Empty;
 	private string installerUrl = string.Empty;
-	private string architecture = "x64";
+	private string architecture = string.Empty;
 	private string installerType = string.Empty;
+	private string nestedInstallerType = string.Empty;
+	private string nestedInstallerFiles = string.Empty;
 	private string scope = string.Empty;
 	private string sha256 = string.Empty;
 	private string productCode = string.Empty;
@@ -101,6 +104,8 @@ public sealed class InstallerArtifact : INotifyPropertyChanged
 	public string InstallerUrl { get => installerUrl; set => Set(ref installerUrl, value); }
 	public string Architecture { get => architecture; set => Set(ref architecture, value); }
 	public string InstallerType { get => installerType; set => Set(ref installerType, value); }
+	public string NestedInstallerType { get => nestedInstallerType; set => Set(ref nestedInstallerType, value); }
+	public string NestedInstallerFiles { get => nestedInstallerFiles; set => Set(ref nestedInstallerFiles, value); }
 	public string Scope { get => scope; set => Set(ref scope, value); }
 	public string Sha256 { get => sha256; set => Set(ref sha256, value); }
 	public string ProductCode { get => productCode; set => Set(ref productCode, value); }
@@ -136,6 +141,9 @@ public sealed record InstallerInspection(
 	string Sha256,
 	string Architecture,
 	string InstallerType,
+	string Scope,
+	string NestedInstallerType,
+	string NestedInstallerFiles,
 	string ProductCode,
 	string UpgradeCode,
 	string ProductVersion,
@@ -144,6 +152,10 @@ public sealed record InstallerInspection(
 	long FileSize,
 	AuthenticodeInspection Signature,
 	string SignatureSha256);
+
+public sealed record NestedInstallerFileEntry(
+	string RelativeFilePath,
+	string PortableCommandAlias);
 
 public sealed record AuthenticodeInspection(
 	string Status,

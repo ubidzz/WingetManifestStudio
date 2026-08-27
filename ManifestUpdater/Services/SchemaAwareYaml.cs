@@ -23,7 +23,7 @@ internal static class SchemaAwareYaml
 	private static IReadOnlyList<string> ManagedInstallerFields => new string[]
 	{
 		"PackageIdentifier", "PackageVersion", "Channel", "InstallerLocale", "Platform",
-		"MinimumOSVersion", "InstallerType", "NestedInstallerType", "Scope", "InstallModes",
+		"MinimumOSVersion", "InstallerType", "NestedInstallerType", "NestedInstallerFiles", "Scope", "InstallModes",
 		"InstallerSwitches", "InstallerSuccessCodes", "UpgradeBehavior", "Commands", "Protocols",
 		"FileExtensions", "PackageFamilyName", "UnsupportedOSArchitectures", "ElevationRequirement",
 		"InstallerAbortsTerminal", "ReleaseDate", "InstallLocationRequired", "RequireExplicitUpgrade",
@@ -33,7 +33,7 @@ internal static class SchemaAwareYaml
 	private static IReadOnlyList<string> ManagedInstallerNodeFields => new string[]
 	{
 		"Architecture", "InstallerUrl", "InstallerSha256", "SignatureSha256", "InstallerType",
-		"NestedInstallerType", "Scope", "ProductCode", "AppsAndFeaturesEntries"
+		"NestedInstallerType", "NestedInstallerFiles", "Scope", "ProductCode", "AppsAndFeaturesEntries"
 	};
 
 	public static ManifestProject LoadProject(string folder, long maximumBytes)
@@ -77,13 +77,14 @@ internal static class SchemaAwareYaml
 			InstallationNotes = Value(localeRoot, "InstallationNotes"),
 			Channel = Value(installerRoot, "Channel"),
 			InstallerLocale = Value(installerRoot, "InstallerLocale"),
-			Platform = JoinList(installerRoot, "Platform").IfEmpty("Windows.Desktop"),
+			Platform = JoinList(installerRoot, "Platform"),
 			MinimumOSVersion = Value(installerRoot, "MinimumOSVersion"),
-			InstallerType = Value(installerRoot, "InstallerType").IfEmpty("exe"),
+			InstallerType = Value(installerRoot, "InstallerType"),
 			NestedInstallerType = Value(installerRoot, "NestedInstallerType"),
-			Scope = Value(installerRoot, "Scope").IfEmpty("user"),
-			InstallModes = JoinList(installerRoot, "InstallModes").IfEmpty("interactive, silent, silentWithProgress"),
-			UpgradeBehavior = Value(installerRoot, "UpgradeBehavior").IfEmpty("install"),
+			NestedInstallerFiles = JoinNestedInstallerFiles(installerRoot),
+			Scope = Value(installerRoot, "Scope"),
+			InstallModes = JoinList(installerRoot, "InstallModes"),
+			UpgradeBehavior = Value(installerRoot, "UpgradeBehavior"),
 			ElevationRequirement = Value(installerRoot, "ElevationRequirement"),
 			Protocols = JoinList(installerRoot, "Protocols"),
 			FileExtensions = JoinList(installerRoot, "FileExtensions"),
@@ -230,6 +231,11 @@ internal static class SchemaAwareYaml
 			warnings.Add("At least one installer is URL-only. Its recorded hash was not compared with a local release file during this run.");
 		if (project.AllowInsecureUrls)
 			warnings.Add("Unsecured HTTP installer URLs are allowed for this project.");
+		if (project.Installers.Any(item => item.InstallerType.IfEmpty(project.InstallerType).Equals("font", StringComparison.OrdinalIgnoreCase)
+			|| item.NestedInstallerType.IfEmpty(project.NestedInstallerType).Equals("font", StringComparison.OrdinalIgnoreCase)))
+			warnings.Add("Font packages use Microsoft's separate fonts manifest root and have stricter community submission rules. Review the current winget-pkgs font policy before submitting.");
+		if (project.Installers.Any(item => item.InstallerType.IfEmpty(project.InstallerType).Equals("pwa", StringComparison.OrdinalIgnoreCase)))
+			warnings.Add("PWA is a schema installer type, but client and community-repository support can vary. Keep the official validation and installation-test result with this project.");
 		return warnings;
 	}
 
@@ -293,8 +299,9 @@ internal static class SchemaAwareYaml
 		SetOptionalScalar(root, "InstallerLocale", project.InstallerLocale);
 		SetList(root, "Platform", Split(project.Platform));
 		SetOptionalScalar(root, "MinimumOSVersion", project.MinimumOSVersion);
-		SetRequiredScalar(root, "InstallerType", project.InstallerType);
+		SetOptionalScalar(root, "InstallerType", project.InstallerType);
 		SetOptionalScalar(root, "NestedInstallerType", project.NestedInstallerType);
+		SetNestedInstallerFiles(root, project.NestedInstallerFiles);
 		SetOptionalScalar(root, "Scope", project.Scope);
 		SetList(root, "InstallModes", Split(project.InstallModes));
 		SetOptionalScalar(root, "UpgradeBehavior", project.UpgradeBehavior);
@@ -349,6 +356,8 @@ internal static class SchemaAwareYaml
 			SetRequiredScalar(node, "InstallerUrl", artifact.InstallerUrl);
 			SetRequiredScalar(node, "InstallerSha256", artifact.Sha256.ToUpperInvariant());
 			SetOptionalOverride(node, "InstallerType", artifact.InstallerType, project.InstallerType);
+			SetOptionalOverride(node, "NestedInstallerType", artifact.NestedInstallerType, project.NestedInstallerType);
+			SetOptionalNestedInstallerFiles(node, artifact.NestedInstallerFiles, project.NestedInstallerFiles);
 			SetOptionalOverride(node, "Scope", artifact.Scope, project.Scope);
 			SetOptionalScalar(node, "ProductCode", artifact.ProductCode.ToUpperInvariant());
 			SetOptionalScalar(node, "SignatureSha256", artifact.SignatureSha256.ToUpperInvariant());
@@ -414,8 +423,10 @@ internal static class SchemaAwareYaml
 			YamlMappingNode? app = Sequence(node, "AppsAndFeaturesEntries")?.Children.OfType<YamlMappingNode>().FirstOrDefault();
 			yield return new InstallerArtifact
 			{
-				Architecture = Value(node, "Architecture").IfEmpty("x64"),
+				Architecture = Value(node, "Architecture"),
 				InstallerType = Value(node, "InstallerType").IfEmpty(project.InstallerType),
+				NestedInstallerType = Value(node, "NestedInstallerType").IfEmpty(project.NestedInstallerType),
+				NestedInstallerFiles = JoinNestedInstallerFiles(node).IfEmpty(project.NestedInstallerFiles),
 				Scope = Value(node, "Scope").IfEmpty(project.Scope),
 				InstallerUrl = Value(node, "InstallerUrl"),
 				Sha256 = Value(node, "InstallerSha256"),
@@ -713,6 +724,56 @@ internal static class SchemaAwareYaml
 		foreach (string value in values)
 			if (!long.TryParse(value, out _)) throw new InvalidDataException($"{key} must contain comma-separated whole numbers. '{value}' is not a number.");
 		SetList(mapping, key, values);
+	}
+
+	private static void SetNestedInstallerFiles(YamlMappingNode mapping, string value)
+	{
+		IReadOnlyList<NestedInstallerFileEntry> files = ManifestService.ParseNestedInstallerFiles(value);
+		if (files.Count == 0)
+		{
+			Remove(mapping, "NestedInstallerFiles");
+			return;
+		}
+
+		YamlSequenceNode sequence = new();
+		foreach (NestedInstallerFileEntry file in files)
+		{
+			YamlMappingNode item = new();
+			SetRequiredScalar(item, "RelativeFilePath", file.RelativeFilePath.Replace('/', '\\'));
+			SetOptionalScalar(item, "PortableCommandAlias", file.PortableCommandAlias);
+			sequence.Add(item);
+		}
+		SetNode(mapping, "NestedInstallerFiles", sequence);
+	}
+
+	private static void SetOptionalNestedInstallerFiles(YamlMappingNode mapping, string value, string inherited)
+	{
+		bool alreadyDefined = Find(mapping, "NestedInstallerFiles") is not null;
+		if (string.IsNullOrWhiteSpace(value) || (!alreadyDefined && SameNestedInstallerFiles(value, inherited)))
+		{
+			Remove(mapping, "NestedInstallerFiles");
+			return;
+		}
+		SetNestedInstallerFiles(mapping, value);
+	}
+
+	private static bool SameNestedInstallerFiles(string left, string right)
+	{
+		IReadOnlyList<NestedInstallerFileEntry> leftFiles = ManifestService.ParseNestedInstallerFiles(left);
+		IReadOnlyList<NestedInstallerFileEntry> rightFiles = ManifestService.ParseNestedInstallerFiles(right);
+		return leftFiles.SequenceEqual(rightFiles);
+	}
+
+	private static string JoinNestedInstallerFiles(YamlMappingNode mapping)
+	{
+		YamlSequenceNode? sequence = Sequence(mapping, "NestedInstallerFiles");
+		if (sequence is null) return string.Empty;
+		return string.Join("; ", sequence.Children.OfType<YamlMappingNode>().Select(item =>
+		{
+			string path = Value(item, "RelativeFilePath");
+			string alias = Value(item, "PortableCommandAlias");
+			return string.IsNullOrWhiteSpace(alias) ? path : path + " | " + alias;
+		}).Where(item => !string.IsNullOrWhiteSpace(item)));
 	}
 
 	private static void SetNode(YamlMappingNode mapping, string key, YamlNode value)

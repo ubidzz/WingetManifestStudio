@@ -600,6 +600,8 @@ internal sealed class StudioComboBox : Control
 	private ContextMenuStrip? dropDownMenu;
 
 	public event EventHandler? SelectedIndexChanged;
+	[DefaultValue(false)]
+	public bool AllowEmptySelection { get; set; }
 
 	[Browsable(false)]
 	public IReadOnlyList<string> Items => items;
@@ -675,6 +677,11 @@ internal sealed class StudioComboBox : Control
 			SelectedIndex = Math.Max(0, selectedIndex <= 0 ? 0 : selectedIndex - 1);
 			eventArgs.Handled = true;
 		}
+		else if (AllowEmptySelection && eventArgs.KeyCode is Keys.Delete or Keys.Back)
+		{
+			SelectedIndex = -1;
+			eventArgs.Handled = true;
+		}
 	}
 
 	private void ShowDropDown()
@@ -690,9 +697,21 @@ internal sealed class StudioComboBox : Control
 			ForeColor = StudioPalette.PrimaryText,
 			Font = Font,
 			Padding = new Padding(4),
-			Size = new Size(Width, Math.Min(320, items.Count * 36 + 8)),
+			Size = new Size(Width, Math.Min(320, (items.Count + (AllowEmptySelection ? 1 : 0)) * 36 + 8)),
 			Renderer = new StudioMenuRenderer()
 		};
+		if (AllowEmptySelection)
+		{
+			ToolStripMenuItem blankItem = new("Leave blank")
+			{
+				AutoSize = false,
+				Size = new Size(Math.Max(40, Width - 10), 34),
+				Checked = selectedIndex < 0,
+				CheckOnClick = false
+			};
+			blankItem.Click += (_, _) => SelectedIndex = -1;
+			menu.Items.Add(blankItem);
+		}
 		for (int index = 0; index < items.Count; index++)
 		{
 			int capturedIndex = index;

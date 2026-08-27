@@ -7,7 +7,7 @@ namespace ManifestUpdater;
 
 public partial class MainForm : Form
 {
-	private static readonly string[] InstallerExtensions = [".msi", ".exe", ".msix", ".msixbundle", ".appx", ".appxbundle", ".zip"];
+	private static readonly string[] InstallerExtensions = [".msi", ".exe", ".msix", ".msixbundle", ".appx", ".appxbundle", ".zip", ".otf", ".otc", ".ttf", ".ttc", ".fnt"];
 	private static readonly Color PageColor = StudioPalette.Window;
 	private static readonly Color CardColor = StudioPalette.Card;
 	private static readonly Color InputColor = StudioPalette.Input;
@@ -18,7 +18,7 @@ public partial class MainForm : Form
 	private static readonly HashSet<string> RequiredProjectFields = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"PackageIdentifier", "PackageVersion", "DefaultLocale", "ManifestVersion", "ManifestFolder",
-		"PackageName", "Publisher", "License", "ShortDescription", "InstallerType", "Scope", "UpgradeBehavior"
+		"PackageName", "Publisher", "License", "ShortDescription"
 	};
 
 	private ManifestProject project = new();
@@ -366,7 +366,7 @@ public partial class MainForm : Form
 		content.Controls.Add(CreateWorkflowCard("1", "Choose what you are doing", "Load an existing manifest folder to update a package, or start a new project and choose an empty output folder.",
 			("Load existing manifests", async (_, _) => await LoadManifestsAsync()),
 			("Create a new project", (_, _) => { NewProject(); SelectTab("Package Details"); })));
-		content.Controls.Add(CreateWorkflowCard("2", "Add the release installers", "Choose the local MSI, EXE, MSIX, Appx, or ZIP files that you will upload. The Studio reads those exact files and calculates their SHA-256 hashes. Then enter the public download URL for each file.",
+		content.Controls.Add(CreateWorkflowCard("2", "Add the release installers", "Choose the local MSI, EXE, MSIX, APPX, ZIP, portable app, or font files that you will upload. The Studio reads those exact files and calculates their SHA-256 hashes. Then enter the public download URL for each file.",
 			("Open Installers & Hashes", (_, _) => SelectTab("Installers & Hashes"))));
 		content.Controls.Add(CreateWorkflowCard("3", "Review before anything is changed", "Preview builds all three manifests in memory. Save writes them only after validation and keeps timestamped backups of files that already exist.",
 			("Open Preview & Submit", (_, _) => SelectTab("Preview & Submit"))));
@@ -398,7 +398,7 @@ public partial class MainForm : Form
 
 		FlowLayoutPanel content = NewScrollFlow();
 		content.Controls.Add(CreateSection("PACKAGE IDENTITY", "The values shared by every manifest file.",
-			Field("PackageIdentifier", "Package identifier", "Required format: Publisher.Application (example: ubidzz.WingetManifestStudio)"),
+			Field("PackageIdentifier", "Package identifier", "Required format: Publisher.Application (example: Contoso.Sample)"),
 			Field("PackageVersion", "Package version", "Do not include a leading v."),
 			Field("DefaultLocale", "Default locale", "Usually en-US"),
 			Field("ManifestVersion", "Winget schema", "Current schema version, for example 1.12.0"),
@@ -443,20 +443,21 @@ public partial class MainForm : Form
 			Field("InstallerLocale", "Installer locale", "Example: en-US"),
 			Field("Platform", "Platforms", "Comma-separated; usually Windows.Desktop"),
 			Field("MinimumOSVersion", "Minimum Windows version", "Example: 10.0.19041.0"),
-			Field("NestedInstallerType", "Nested installer type", "Required for ZIP installers"),
+			ChoiceField("NestedInstallerType", "Shared nested type", ["exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "portable", "font"], 260),
+			Field("NestedInstallerFiles", "Shared ZIP contents", "Semicolon-separated paths inside the ZIP; add | command after a portable file when needed", multiline: true),
 			Field("Protocols", "Protocols", "Comma-separated URL protocols"),
 			Field("FileExtensions", "File extensions", "Comma-separated, without dots"),
 			Field("UnsupportedOSArchitectures", "Unsupported architectures", "Comma-separated"),
 			Field("InstallerSuccessCodes", "Extra success codes", "Comma-separated whole numbers"),
 			Field("PackageFamilyName", "Package family name"),
 			Field("ReleaseDate", "Release date", "YYYY-MM-DD"),
-			Field("RepairBehavior", "Repair behavior", "modify, uninstaller, or installer"),
-			Field("InstallerAbortsTerminal", "Installer aborts terminal", "true, false, or blank"),
-			Field("InstallLocationRequired", "Install location required", "true, false, or blank"),
-			Field("RequireExplicitUpgrade", "Require explicit upgrade", "true, false, or blank"),
-			Field("DisplayInstallWarnings", "Display install warnings", "true, false, or blank"),
-			Field("DownloadCommandProhibited", "Prohibit download command", "true, false, or blank"),
-			Field("ArchiveBinariesDependOnPath", "Archive binaries depend on PATH", "true, false, or blank")));
+			ChoiceField("RepairBehavior", "Repair behavior", ["modify", "uninstaller", "installer"], 260),
+			ChoiceField("InstallerAbortsTerminal", "Installer aborts terminal", ["true", "false"], 260),
+			ChoiceField("InstallLocationRequired", "Install location required", ["true", "false"], 260),
+			ChoiceField("RequireExplicitUpgrade", "Require explicit upgrade", ["true", "false"], 260),
+			ChoiceField("DisplayInstallWarnings", "Display install warnings", ["true", "false"], 260),
+			ChoiceField("DownloadCommandProhibited", "Prohibit download command", ["true", "false"], 260),
+			ChoiceField("ArchiveBinariesDependOnPath", "Archive binaries depend on PATH", ["true", "false"], 300)));
 		optionalProjectFieldsPanel.Controls.Add(CreateSection("INSTALLER SWITCHES", "Winget uses these command-line switches for installer actions. Known Inno, Nullsoft, MSI, and MSIX types often need no custom values.",
 			Field("SwitchSilent", "Silent switch"),
 			Field("SwitchSilentWithProgress", "Silent with progress"),
@@ -505,7 +506,7 @@ public partial class MainForm : Form
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 		root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.Controls.Add(CreateInfoStrip("FOLLOW THESE INSTALLER STEPS", "1 Add the exact local release file. 2 Paste its direct public HTTPS download URL into that row. 3 Select the row and inspect it. 4 Verify Public URLs after uploading the release. Hash, type, architecture, and supported MSI identity values are filled automatically."), 0, 0);
+		root.Controls.Add(CreateInfoStrip("FOLLOW THESE INSTALLER STEPS", "1 Add each exact release file. 2 Paste its direct public HTTPS URL. 3 Inspect it to fill the hash and metadata. 4 Verify URLs after uploading. Architecture, type, and scope stay visible beside the URL and can be corrected from their dropdowns."), 0, 0);
 		root.Controls.Add(CreateToolbar(
 			("1 Add Release Files", async (_, _) => await AddInstallerFilesAsync()),
 			("2 Enter Public URL", (_, _) => FocusInstallerUrlCell()),
@@ -620,12 +621,13 @@ public partial class MainForm : Form
 		content.Controls.Add(CreateWorkflowCard("3", "Complete the public package information", "Package Name, Publisher, License, and Short Description are required. Add the official website, support and license links when available. Description, tags, release notes, and moniker help people understand and find the application.",
 			("Edit Package Information", (_, _) => SelectTab("Package Details"))));
 		content.Controls.Add(CreateInfoStrip("INSTALLER FILES AND DOWNLOAD LINKS", "Winget downloads from a public URL, but the Studio uses your matching local release file to calculate the trusted SHA-256 value."));
-		content.Controls.Add(CreateWorkflowCard("4", "Add the exact release file", "Choose Add Release Files for every architecture you publish. Select the same MSI, EXE, MSIX, APPX, bundle, or ZIP file that will be uploaded to your release. Use one row for each architecture or installer variation.",
+		content.Controls.Add(CreateWorkflowCard("4", "Add the exact release file", "Choose Add Release Files for every installer you publish. Select the same MSI, EXE, MSIX, APPX, bundle, ZIP, portable app, or font file that will be uploaded. Use one row for each architecture, scope, or installer variation. Nothing is assumed to be x64.",
 			("Open Installers & Hashes", (_, _) => SelectTab("Installers & Hashes"))));
 		content.Controls.Add(CreateWorkflowCard("5", "Enter its public HTTPS URL", "Paste the direct download URL for each installer—not a web page containing a download button. The URL must remain public and must download the exact local file in that row. GitHub release asset URLs are suitable.",
 			("Enter Download URLs", (_, _) => SelectTab("Installers & Hashes"))));
-		content.Controls.Add(CreateWorkflowCard("6", "Inspect and verify the published installer", "Inspect & Fill Details calculates the local SHA-256, type, architecture, and MSI IDs. After uploading the release, Verify Public URLs downloads it temporarily and proves the public file matches that SHA-256.",
+		content.Controls.Add(CreateWorkflowCard("6", "Inspect and verify the published installer", "Inspect & Fill Details calculates SHA-256 and detects supported metadata. MSI files can provide identity, architecture, and scope. ZIP files show their nested installer paths for review. Existing package name, publisher, and version entries are never replaced by inspection. After upload, Verify Public URLs proves the public file matches the local SHA-256.",
 			("Inspect Installer Files", (_, _) => SelectTab("Installers & Hashes"))));
+		content.Controls.Add(CreateInfoStrip("SPECIAL PACKAGE TYPES", "Portable EXEs may look like normal EXE installers, so choose portable in the row when needed. Font packages use Microsoft's separate fonts manifest root and have stricter submission rules. PWA support can vary by Winget client and repository policy; always keep the official validation and install-test result."));
 		content.Controls.Add(CreateInfoStrip("REVIEW, SAVE, AND PUBLISH", "The preview is your safety check. It creates the proposed YAML in memory without writing to the selected folder."));
 		content.Controls.Add(CreateWorkflowCard("7", "Follow Project Readiness, then preview", "The readiness panel counts anything still required and marks problem fields. When it says READY, choose Preview Changes and review the identifier, old and new versions, URLs, architectures, installer types, hashes, and filenames.",
 			("Review the Preview", (_, _) => SelectTab("Preview & Submit"))));
@@ -642,7 +644,7 @@ public partial class MainForm : Form
 		content.Controls.Add(CreateWorkflowCard("13", "Submit directly from Test Center", "After all four required tests pass, choose Submit to Winget at the bottom of the Test Center steps. It opens Microsoft's WingetCreate workflow for sign-in and pull-request creation. The GitHub token stays in Windows Credential Manager.",
 			("Open Test Center", (_, _) => SelectTab("Test Center")),
 			("Open Official Tools", (_, _) => SelectTab("Official Tool Commands"))));
-		content.Controls.Add(CreateInfoStrip("COMMON PROBLEMS", "Do not use a leading v in the version, a release web-page URL instead of the direct asset URL, a hash from a different file, or the wrong architecture. Reattach and inspect the exact published file whenever it changes."));
+		content.Controls.Add(CreateInfoStrip("COMMON PROBLEMS", "Do not use a leading v in the version, a release web-page URL instead of the direct asset URL, a hash from a different file, or the wrong architecture. For ZIP packages, review NESTED TYPE and ZIP CONTENTS. Reattach and inspect the exact published file whenever it changes."));
 		page.Controls.Add(content);
 		return page;
 	}
@@ -883,7 +885,15 @@ public partial class MainForm : Form
 			[".json"],
 			false);
 		if (selectedPaths.Length == 0) return;
-		try { project = ProfileStore.Load(selectedPaths[0]); ApplyProjectToControls(); SetStatus("Profile loaded."); }
+		try
+		{
+			project = ProfileStore.Load(selectedPaths[0]);
+			ApplyProjectToControls();
+			int missingFiles = project.Installers.Count(item => !string.IsNullOrWhiteSpace(item.LocalFile) && !File.Exists(item.LocalFile));
+			SetStatus(missingFiles == 0
+				? "Profile loaded. Review the package details and installer rows before continuing."
+				: $"Profile loaded on this computer. Reattach {missingFiles} missing local installer file(s); public URLs and saved metadata were kept.");
+		}
 		catch (Exception ex) { ShowError("Could not open the profile", ex); }
 	}
 
@@ -928,7 +938,7 @@ public partial class MainForm : Form
 		List<InstallerArtifact> added = [];
 		foreach (string file in selectedPaths)
 		{
-			InstallerArtifact item = new() { LocalFile = file, Architecture = "x64", VerificationStatus = "Waiting for inspection" };
+			InstallerArtifact item = new() { LocalFile = file, VerificationStatus = "Waiting for inspection" };
 			project.Installers.Add(item);
 			added.Add(item);
 		}
@@ -938,7 +948,7 @@ public partial class MainForm : Form
 
 	private void AddUrlInstaller()
 	{
-		project.Installers.Add(new InstallerArtifact { Architecture = "x64", VerificationStatus = "URL entered manually • not inspected" });
+		project.Installers.Add(new InstallerArtifact { VerificationStatus = "URL entered manually • not inspected" });
 		installerGrid.CurrentCell = installerGrid.Rows[^1].Cells[nameof(InstallerArtifact.InstallerUrl)];
 		installerGrid.BeginEdit(true);
 	}
@@ -1102,55 +1112,60 @@ public partial class MainForm : Form
 			Progress<string> progress = new(SetStatus);
 			InstallerInspection result = await InstallerInspector.InspectAsync(item.LocalFile, item.InstallerUrl, progress, operationCancellation!.Token);
 			item.Sha256 = result.Sha256;
-			item.Architecture = result.Architecture.IfEmpty(item.Architecture).IfEmpty("x64");
-			item.InstallerType = result.InstallerType;
-			item.ProductCode = result.ProductCode;
-			item.UpgradeCode = result.UpgradeCode;
-			item.ProductVersion = result.ProductVersion;
-			item.DisplayName = result.DisplayName;
-			item.Publisher = result.Publisher;
+			item.Architecture = item.Architecture.IfEmpty(result.Architecture);
+			item.InstallerType = item.InstallerType.IfEmpty(result.InstallerType);
+			item.Scope = item.Scope.IfEmpty(result.Scope);
+			item.NestedInstallerType = item.NestedInstallerType.IfEmpty(result.NestedInstallerType);
+			item.NestedInstallerFiles = item.NestedInstallerFiles.IfEmpty(result.NestedInstallerFiles);
+			item.ProductCode = result.ProductCode.IfEmpty(item.ProductCode);
+			item.UpgradeCode = result.UpgradeCode.IfEmpty(item.UpgradeCode);
+			item.ProductVersion = result.ProductVersion.IfEmpty(item.ProductVersion);
+			item.DisplayName = result.DisplayName.IfEmpty(item.DisplayName);
+			item.Publisher = result.Publisher.IfEmpty(item.Publisher);
 			item.SignatureSha256 = result.SignatureSha256;
 			ApplySignature(item, result.Signature);
 			if (!string.IsNullOrWhiteSpace(result.SignatureSha256) && !result.Signature.IsSigned)
 				item.SignatureStatus = "MSIX/APPX package signature present";
 			item.VerificationStatus = File.Exists(item.LocalFile) ? "Verified from local release file" : "Calculated from temporary URL download";
-			SynchronizePackageVersionFromInstaller(item, result.ProductVersion);
-			if (string.IsNullOrWhiteSpace(project.PackageName) && !string.IsNullOrWhiteSpace(result.DisplayName))
+			string versionNote = SynchronizePackageVersionFromInstaller(item, result.ProductVersion);
+			if (string.IsNullOrWhiteSpace(Read("PackageName")) && !string.IsNullOrWhiteSpace(result.DisplayName))
 				fields["PackageName"].Text = result.DisplayName;
-			if (string.IsNullOrWhiteSpace(project.Publisher) && !string.IsNullOrWhiteSpace(result.Publisher))
+			if (string.IsNullOrWhiteSpace(Read("Publisher")) && !string.IsNullOrWhiteSpace(result.Publisher))
 				fields["Publisher"].Text = result.Publisher;
-			SetStatus($"Inspected {Path.GetFileName(item.LocalFile.IfEmpty(item.InstallerUrl))}: {FormatSize(result.FileSize)}, {result.Architecture}, {result.InstallerType}.");
+			string zipNote = result.InstallerType.Equals("zip", StringComparison.OrdinalIgnoreCase)
+				? string.IsNullOrWhiteSpace(result.NestedInstallerFiles)
+					? " No supported installer file was found inside the ZIP; enter its contents in the ZIP CONTENTS column."
+					: $" Found {ManifestService.ParseNestedInstallerFiles(result.NestedInstallerFiles).Count} installer file(s) inside the ZIP."
+				: string.Empty;
+			string choiceNote = (!item.Architecture.Equals(result.Architecture, StringComparison.OrdinalIgnoreCase)
+				|| !item.InstallerType.Equals(result.InstallerType, StringComparison.OrdinalIgnoreCase))
+				? $" The row kept your choices ({item.Architecture}, {item.InstallerType}); file inspection suggested {result.Architecture}, {result.InstallerType}."
+				: string.Empty;
+			SetStatus($"Inspected {Path.GetFileName(item.LocalFile.IfEmpty(item.InstallerUrl))}: {FormatSize(result.FileSize)}, {item.Architecture}, {item.InstallerType}.{zipNote}{choiceNote}{versionNote}");
 		}
 		catch (OperationCanceledException) { SetStatus("Installer inspection cancelled."); }
 		catch (Exception ex) { ShowError("Installer inspection failed", ex); }
 		finally { SetBusy(false); installerGrid.Refresh(); }
 	}
 
-	private void SynchronizePackageVersionFromInstaller(InstallerArtifact inspectedInstaller, string inspectedVersion)
+	private string SynchronizePackageVersionFromInstaller(InstallerArtifact inspectedInstaller, string inspectedVersion)
 	{
 		string newVersion = inspectedVersion.Trim().TrimStart('v', 'V');
-		if (string.IsNullOrWhiteSpace(newVersion)) return;
+		if (string.IsNullOrWhiteSpace(newVersion)) return string.Empty;
 		string oldVersion = fields["PackageVersion"].Text.Trim().TrimStart('v', 'V');
-		if (string.Equals(oldVersion, newVersion, StringComparison.OrdinalIgnoreCase)) return;
+		if (string.Equals(oldVersion, newVersion, StringComparison.OrdinalIgnoreCase)) return string.Empty;
 		bool conflictingInstaller = project.Installers
 			.Where(installer => !ReferenceEquals(installer, inspectedInstaller))
 			.Select(installer => installer.ProductVersion.Trim().TrimStart('v', 'V'))
 			.Any(version => !string.IsNullOrWhiteSpace(version) && !string.Equals(version, newVersion, StringComparison.OrdinalIgnoreCase));
 		if (conflictingInstaller)
-		{
-			SetStatus($"The inspected file is version {newVersion}, but another installer reports a different version. The package version was not changed.");
-			return;
-		}
+			return $" This file reports version {newVersion}, but another installer reports a different version; the package version was not changed.";
+		if (!string.IsNullOrWhiteSpace(oldVersion))
+			return $" This file reports version {newVersion}; your package version {oldVersion} was kept so an inspection never changes release data you entered.";
 
 		fields["PackageVersion"].Text = newVersion;
 		project.PackageVersion = newVersion;
-		if (!string.IsNullOrWhiteSpace(oldVersion))
-		{
-			fields["ReleaseNotesUrl"].Text = ManifestService.SynchronizeGitHubReleaseUrl(fields["ReleaseNotesUrl"].Text, oldVersion, newVersion);
-			project.ReleaseNotesUrl = fields["ReleaseNotesUrl"].Text;
-			foreach (InstallerArtifact installer in project.Installers)
-				installer.InstallerUrl = ManifestService.SynchronizeGitHubReleaseUrl(installer.InstallerUrl, oldVersion, newVersion);
-		}
+		return $" Package version was filled with {newVersion}.";
 	}
 
 	private void GeneratePreview()
@@ -2316,6 +2331,7 @@ public partial class MainForm : Form
 		project.MinimumOSVersion = Read("MinimumOSVersion");
 		project.InstallerType = Read("InstallerType");
 		project.NestedInstallerType = Read("NestedInstallerType");
+		project.NestedInstallerFiles = Read("NestedInstallerFiles");
 		project.Scope = Read("Scope");
 		project.InstallModes = Read("InstallModes");
 		project.UpgradeBehavior = Read("UpgradeBehavior");
@@ -2383,6 +2399,7 @@ public partial class MainForm : Form
 			Write("MinimumOSVersion", project.MinimumOSVersion);
 			Write("InstallerType", project.InstallerType);
 			Write("NestedInstallerType", project.NestedInstallerType);
+			Write("NestedInstallerFiles", project.NestedInstallerFiles);
 			Write("Scope", project.Scope);
 			Write("InstallModes", project.InstallModes);
 			Write("UpgradeBehavior", project.UpgradeBehavior);
@@ -3280,12 +3297,12 @@ public partial class MainForm : Form
 	{
 		FlowLayoutPanel row = CreateInlinePanel();
 		row.Padding = new Padding(14, 9, 14, 9);
-		row.Controls.Add(NewInlineLabel("Defaults"));
-		row.Controls.Add(ChoiceField("InstallerType", "Installer type", ["exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "zip", "portable", "font"], 150));
+		row.Controls.Add(NewInlineLabel("Optional shared settings"));
+		row.Controls.Add(ChoiceField("InstallerType", "Shared installer type", ["exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "zip", "pwa", "portable", "font"], 165));
 		row.Controls.Add(ChoiceField("Scope", "Scope", ["user", "machine"], 125));
 		row.Controls.Add(Field("InstallModes", "Install modes", "Comma-separated", width: 270));
 		row.Controls.Add(ChoiceField("UpgradeBehavior", "Upgrade behavior", ["install", "uninstallPrevious", "deny"], 180));
-		row.Controls.Add(Field("ElevationRequirement", "Elevation", "optional", width: 125));
+		row.Controls.Add(ChoiceField("ElevationRequirement", "Elevation", ["elevationRequired", "elevatesSelf", "elevationProhibited"], 180));
 		insecureUrlCheck = NewCheckBox("Allow HTTP URLs");
 		row.Controls.Add(insecureUrlCheck);
 		return row;
@@ -3303,14 +3320,31 @@ public partial class MainForm : Form
 		{
 			grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = property, Name = property, HeaderText = title, Width = width, AutoSizeMode = fill ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.None });
 		}
-		Add(nameof(InstallerArtifact.LocalFile), "LOCAL RELEASE FILE", 245);
-		Add(nameof(InstallerArtifact.InstallerUrl), "PUBLIC INSTALLER URL", 340);
-		Add(nameof(InstallerArtifact.VerificationStatus), "HASH SOURCE / STATUS", 255);
+		void AddChoice(string property, string title, int width, params string[] choices)
+		{
+			DataGridViewComboBoxColumn column = new()
+			{
+				DataPropertyName = property,
+				Name = property,
+				HeaderText = title,
+				Width = width,
+				AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+				FlatStyle = FlatStyle.Flat,
+				DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton
+			};
+			column.Items.AddRange(choices.Cast<object>().ToArray());
+			grid.Columns.Add(column);
+		}
+		Add(nameof(InstallerArtifact.LocalFile), "LOCAL RELEASE FILE", 210);
+		Add(nameof(InstallerArtifact.InstallerUrl), "PUBLIC INSTALLER URL", 285);
+		AddChoice(nameof(InstallerArtifact.Architecture), "ARCH", 78, "", "x86", "x64", "arm", "arm64", "neutral");
+		AddChoice(nameof(InstallerArtifact.InstallerType), "TYPE", 100, "", "exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "zip", "pwa", "portable", "font");
+		AddChoice(nameof(InstallerArtifact.Scope), "SCOPE", 84, "", "user", "machine");
+		Add(nameof(InstallerArtifact.VerificationStatus), "HASH SOURCE / STATUS", 220);
+		AddChoice(nameof(InstallerArtifact.NestedInstallerType), "NESTED TYPE", 118, "", "exe", "msi", "wix", "burn", "inno", "nullsoft", "msix", "appx", "portable", "font");
+		Add(nameof(InstallerArtifact.NestedInstallerFiles), "ZIP CONTENTS", 245);
 		Add(nameof(InstallerArtifact.SignatureStatus), "DIGITAL SIGNATURE", 230);
 		Add(nameof(InstallerArtifact.SignerName), "SIGNER", 180);
-		Add(nameof(InstallerArtifact.Architecture), "ARCH", 65);
-		Add(nameof(InstallerArtifact.InstallerType), "TYPE", 75);
-		Add(nameof(InstallerArtifact.Scope), "SCOPE", 70);
 		Add(nameof(InstallerArtifact.Sha256), "SHA-256", 220);
 		Add(nameof(InstallerArtifact.ProductCode), "PRODUCT CODE", 190);
 		Add(nameof(InstallerArtifact.UpgradeCode), "UPGRADE CODE", 190);
@@ -3359,11 +3393,16 @@ public partial class MainForm : Form
 				grid.Rows[eventArgs.RowIndex].DataBoundItem is not InstallerArtifact installer)
 				return;
 			string columnName = grid.Columns[eventArgs.ColumnIndex].Name;
-			if (columnName is not (nameof(InstallerArtifact.ProductCode) or nameof(InstallerArtifact.UpgradeCode)))
-				return;
-			eventArgs.ToolTipText = UsesMsiIdentityCodes(installer.InstallerType)
-				? "This value is read automatically from the selected MSI file. 'Not found in MSI' means the package author did not include it."
-				: "This installer does not provide standardized MSI identity codes. Winget treats these fields as optional, so leave them blank unless you know the installed Apps & Features correlation value.";
+			if (columnName is nameof(InstallerArtifact.ProductCode) or nameof(InstallerArtifact.UpgradeCode))
+			{
+				eventArgs.ToolTipText = UsesMsiIdentityCodes(installer.InstallerType)
+					? "This value is read automatically from the selected MSI file. 'Not found in MSI' means the package author did not include it."
+					: "This installer does not provide standardized MSI identity codes. Winget treats these fields as optional, so leave them blank unless you know the installed Apps & Features correlation value.";
+			}
+			else if (columnName == nameof(InstallerArtifact.NestedInstallerType))
+				eventArgs.ToolTipText = "Required only for ZIP packages. Use the installer technology inside the archive, such as exe, msi, portable, or font.";
+			else if (columnName == nameof(InstallerArtifact.NestedInstallerFiles))
+				eventArgs.ToolTipText = "Required only for ZIP packages. Enter paths inside the ZIP separated by semicolons. For portable files, add an optional command after |, for example tools\\sample.exe | sample.";
 		};
 		return grid;
 	}
@@ -3409,6 +3448,7 @@ public partial class MainForm : Form
 		Panel wrapper = new() { Width = width, Height = 98, Margin = new Padding(8) };
 		Label caption = new() { Text = required ? label + " *" : label, AutoSize = true, ForeColor = required ? Color.White : Color.FromArgb(189, 213, 244), Font = new Font("Segoe UI Semibold", 9F), Location = new Point(0, 0) };
 		StudioComboBox box = NewComboBox(width);
+		box.AllowEmptySelection = !required;
 		box.AccessibleName = label;
 		box.AccessibleDescription = guidance;
 		box.Location = new Point(0, 24);
@@ -3452,11 +3492,12 @@ public partial class MainForm : Form
 			"InstallerLocale" => "Language built into the installer, such as en-US",
 			"Platform" => "Supported Winget platforms; normally Windows.Desktop",
 			"MinimumOSVersion" => "Lowest supported Windows version, such as 10.0.19041.0",
-			"InstallerType" => "Format or technology used by the installer",
+			"InstallerType" => "Optional shared type; inspected rows keep their own type, so leave this blank for mixed installers",
 			"NestedInstallerType" => "Real installer type inside a ZIP package",
-			"Scope" => "Choose user for one account or machine for the whole computer",
+			"NestedInstallerFiles" => "Shared paths inside a ZIP; separate paths with semicolons and add | command only for portable files",
+			"Scope" => "Optional shared scope; choose user for one account, machine for the whole computer, or leave blank when it varies by installer",
 			"InstallModes" => "Supported modes separated with commas: interactive, silent, silentWithProgress",
-			"UpgradeBehavior" => "How upgrades behave; normally install",
+			"UpgradeBehavior" => "Optional instruction for upgrades; leave blank unless the installer requires a specific behavior",
 			"ElevationRequirement" => "Whether the installer requires elevation; leave blank when unknown",
 			"Protocols" => "URL protocols registered by the app, separated with commas",
 			"FileExtensions" => "File extensions registered by the app, separated with commas and without dots",
@@ -3813,6 +3854,15 @@ public partial class MainForm : Form
 				comboBox.SelectedIndex = candidate;
 				Record(comboBox.SelectedIndex == candidate && comboBox.Text == comboBox.Items[candidate], "Custom dropdown selection");
 				comboBox.SelectedIndex = original;
+			}
+			StudioComboBox? optionalComboBox = comboBoxes.FirstOrDefault(comboBox => comboBox.AllowEmptySelection);
+			if (optionalComboBox is not null)
+			{
+				int original = optionalComboBox.SelectedIndex;
+				optionalComboBox.SelectedIndex = 0;
+				optionalComboBox.SelectedIndex = -1;
+				Record(optionalComboBox.Text.Length == 0, "Optional dropdowns provide a clear leave-blank choice");
+				optionalComboBox.SelectedIndex = original;
 			}
 			if (comboBoxes.Length > 0)
 			{

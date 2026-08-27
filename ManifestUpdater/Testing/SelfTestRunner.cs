@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using YamlDotNet.RepresentationModel;
 
 namespace ManifestUpdater;
@@ -16,10 +17,13 @@ internal static class SelfTestRunner
 			TestPreservingUpdate(root, results);
 			TestNestedManifestDiscovery(root, results);
 			TestStructuralReorderAndExtraLocale(root, results);
+			TestOptionalRootPreservation(root, results);
+			TestZipNestedInstallerFiles(root, results);
 			TestAdvancedSchemaFields(root, results);
+			TestSpecialPackageGuidance(root, results);
 			TestCleanValidationFolder(root, results);
-			TestReleaseUrlSynchronization(results);
 			TestBeginnerValidation(results);
+			TestDynamicPackageValidation(results);
 			TestWingetCreateCommandModes(results);
 			TestCredentialStatusCheck(results);
 			TestTestingEnvironmentChecks(results);
@@ -27,6 +31,8 @@ internal static class SelfTestRunner
 			TestRepositoryPathAndLocalization(results);
 			TestProfileRoundTrip(root, results);
 			await TestInstallerInspectionAsync(results);
+			await TestFontInspectionAsync(root, results);
+			await TestZipInspectionAsync(root, results);
 			await TestWingetHealthDiagnosticAsync(results);
 			TestAuthenticodeInspection(root, results);
 			int installerIndex = Array.FindIndex(args, argument => string.Equals(argument, "--verify-installer", StringComparison.OrdinalIgnoreCase));
@@ -179,6 +185,110 @@ ManifestVersion: 1.12.0
 		results.Add("PASS: current-schema guided fields and validated advanced field coverage.");
 	}
 
+	private static void TestOptionalRootPreservation(string root, List<string> results)
+	{
+		string folder = Path.Combine(root, "optional-root-preservation");
+		Directory.CreateDirectory(folder);
+		File.WriteAllText(Path.Combine(folder, "Fabrikam.Utility.yaml"), """
+PackageIdentifier: Fabrikam.Utility
+PackageVersion: 2.0.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.12.0
+""");
+		File.WriteAllText(Path.Combine(folder, "Fabrikam.Utility.locale.en-US.yaml"), """
+PackageIdentifier: Fabrikam.Utility
+PackageVersion: 2.0.0
+PackageLocale: en-US
+Publisher: Fabrikam
+PackageName: Utility
+License: MIT
+ShortDescription: A utility.
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0
+""");
+		File.WriteAllText(Path.Combine(folder, "Fabrikam.Utility.installer.yaml"), """
+PackageIdentifier: Fabrikam.Utility
+PackageVersion: 2.0.0
+Installers:
+  - Architecture: arm64
+    InstallerType: exe
+    InstallerUrl: https://example.com/Utility-arm64.exe
+    InstallerSha256: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+ManifestType: installer
+ManifestVersion: 1.12.0
+""");
+
+		ManifestProject project = ManifestService.LoadProject(folder);
+		Assert(project.Platform.Length == 0 && project.InstallerType.Length == 0 && project.Scope.Length == 0
+			&& project.InstallModes.Length == 0 && project.UpgradeBehavior.Length == 0,
+			"Loading an existing manifest must not invent optional root installer defaults.");
+		ManifestGenerationResult generated = ManifestService.Generate(project);
+		string installer = generated.Files.Single(pair => pair.Key.Contains(".installer.", StringComparison.OrdinalIgnoreCase)).Value;
+		YamlStream parsed = new();
+		parsed.Load(new StringReader(installer));
+		YamlMappingNode manifest = (YamlMappingNode)parsed.Documents[0].RootNode;
+		Assert(!HasRootKey(manifest, "Platform") && !HasRootKey(manifest, "InstallerType") && !HasRootKey(manifest, "Scope")
+			&& !HasRootKey(manifest, "InstallModes") && !HasRootKey(manifest, "UpgradeBehavior"),
+			"Previewing an existing manifest must keep absent optional root fields absent.");
+		YamlMappingNode row = ((YamlSequenceNode)manifest.Children[new YamlScalarNode("Installers")]).Children.OfType<YamlMappingNode>().Single();
+		Assert(row.Children[new YamlScalarNode("InstallerType")].ToString() == "exe", "A row-level installer type must remain on that row.");
+		results.Add("PASS: optional root fields are preserved without package-specific defaults.");
+	}
+
+	private static void TestZipNestedInstallerFiles(string root, List<string> results)
+	{
+		string folder = Path.Combine(root, "zip-nested-files");
+		ManifestProject project = SampleProject(folder);
+		project.InstallerType = string.Empty;
+		InstallerArtifact installer = project.Installers.Single();
+		installer.InstallerType = "zip";
+		installer.NestedInstallerType = "portable";
+		installer.NestedInstallerFiles = "tools\\sample.exe | sample; tools\\sample-cli.exe | sample-cli";
+		installer.InstallerUrl = "https://example.com/Sample.zip";
+		Assert(ManifestService.Validate(project).Count == 0, "A complete portable ZIP package must pass local validation.");
+
+		ManifestGenerationResult generated = ManifestService.Generate(project);
+		string yaml = generated.Files.Single(pair => pair.Key.Contains(".installer.", StringComparison.OrdinalIgnoreCase)).Value;
+		Assert(yaml.Contains("NestedInstallerFiles:", StringComparison.Ordinal)
+			&& yaml.Contains("RelativeFilePath: tools\\sample.exe", StringComparison.Ordinal)
+			&& yaml.Contains("PortableCommandAlias: sample-cli", StringComparison.Ordinal),
+			"ZIP contents and portable command aliases must be emitted as schema-aware YAML.");
+		ManifestService.Save(project, generated);
+		ManifestProject loaded = ManifestService.LoadProject(folder);
+		Assert(loaded.Installers.Single().NestedInstallerFiles.Contains("sample-cli.exe | sample-cli", StringComparison.Ordinal),
+			"ZIP nested file paths and aliases must load back into the installer row.");
+
+		installer.NestedInstallerFiles = string.Empty;
+		Assert(ManifestService.Validate(project).Any(error => error.Contains("file path from inside", StringComparison.OrdinalIgnoreCase)),
+			"A ZIP without NestedInstallerFiles must be stopped with a clear error.");
+
+		ManifestProject sharedProject = SampleProject(Path.Combine(root, "zip-shared-nested-files"));
+		sharedProject.InstallerType = "zip";
+		sharedProject.NestedInstallerType = "portable";
+		sharedProject.NestedInstallerFiles = "tools\\shared.exe | shared";
+		InstallerArtifact sharedInstaller = sharedProject.Installers.Single();
+		sharedInstaller.InstallerType = string.Empty;
+		sharedInstaller.NestedInstallerType = string.Empty;
+		sharedInstaller.NestedInstallerFiles = string.Empty;
+		sharedInstaller.InstallerUrl = "https://example.com/Shared.zip";
+		Assert(ManifestService.Validate(sharedProject).Count == 0, "A shared root-level ZIP definition must satisfy its installer rows.");
+		ManifestGenerationResult sharedGenerated = ManifestService.Generate(sharedProject);
+		string sharedYaml = sharedGenerated.Files.Single(pair => pair.Key.Contains(".installer.", StringComparison.OrdinalIgnoreCase)).Value;
+		YamlStream sharedParsed = new();
+		sharedParsed.Load(new StringReader(sharedYaml));
+		YamlMappingNode sharedRoot = (YamlMappingNode)sharedParsed.Documents[0].RootNode;
+		YamlMappingNode sharedRow = ((YamlSequenceNode)sharedRoot.Children[new YamlScalarNode("Installers")]).Children.OfType<YamlMappingNode>().Single();
+		Assert(HasRootKey(sharedRoot, "NestedInstallerFiles") && !HasRootKey(sharedRow, "NestedInstallerFiles"),
+			"A shared root-level ZIP definition must stay at the root instead of being duplicated into every row.");
+		ManifestService.Save(sharedProject, sharedGenerated);
+		ManifestProject sharedLoaded = ManifestService.LoadProject(sharedProject.ManifestFolder);
+		Assert(sharedLoaded.NestedInstallerFiles.Contains("shared.exe | shared", StringComparison.Ordinal)
+			&& sharedLoaded.Installers.Single().NestedInstallerFiles.Contains("shared.exe | shared", StringComparison.Ordinal),
+			"Root-level ZIP contents must load as the shared value and the effective row value.");
+		results.Add("PASS: ZIP nested installers round-trip and validate for any package.");
+	}
+
 	private static void TestTestingEnvironmentChecks(List<string> results)
 	{
 		ProcessStartInfo enableCommand = WingetCommandService.CreateEnableLocalManifestFilesStartInfo();
@@ -198,6 +308,27 @@ ManifestVersion: 1.12.0
 			"Winget health checks must retain its version while reading administrator settings.");
 		_ = WingetCommandService.IsWindowsSandboxAvailable();
 		results.Add("PASS: local-manifest setup calls Winget directly and reads the current administrator setting.");
+	}
+
+	private static void TestSpecialPackageGuidance(string root, List<string> results)
+	{
+		ManifestProject fontProject = SampleProject(Path.Combine(root, "font-guidance"));
+		fontProject.InstallerType = string.Empty;
+		fontProject.Installers[0].InstallerType = "font";
+		fontProject.Installers[0].Architecture = "neutral";
+		fontProject.Installers[0].InstallerUrl = "https://example.com/Fabrikam.ttf";
+		ManifestGenerationResult fontResult = ManifestService.Generate(fontProject);
+		Assert(fontResult.Warnings.Any(warning => warning.Contains("fonts manifest root", StringComparison.OrdinalIgnoreCase)),
+			"Font projects must explain the separate Microsoft repository root before submission.");
+
+		ManifestProject pwaProject = SampleProject(Path.Combine(root, "pwa-guidance"));
+		pwaProject.InstallerType = string.Empty;
+		pwaProject.Installers[0].InstallerType = "pwa";
+		pwaProject.Installers[0].Architecture = "neutral";
+		ManifestGenerationResult pwaResult = ManifestService.Generate(pwaProject);
+		Assert(pwaResult.Warnings.Any(warning => warning.Contains("client and community-repository support", StringComparison.OrdinalIgnoreCase)),
+			"PWA projects must explain that official client and repository support can differ from schema authoring support.");
+		results.Add("PASS: font and PWA projects receive current submission-context guidance.");
 	}
 
 	private static async Task TestWingetHealthDiagnosticAsync(List<string> results)
@@ -224,6 +355,8 @@ ManifestVersion: 1.12.0
 	{
 		Assert(WingetRepositoryService.BuildRepositoryPath("Microsoft.VisualStudioCode") == "manifests/m/Microsoft/VisualStudioCode",
 			"Exact package identifiers must map to the official winget-pkgs directory structure.");
+		Assert(WingetRepositoryService.BuildRepositoryPath("Microsoft.FluentFonts", "fonts") == "fonts/m/Microsoft/FluentFonts",
+			"Font package identifiers must map to the separate official fonts repository root.");
 		Assert(StudioLocalization.Translate("Test Center", "es-ES") == "Centro de pruebas", "Spanish interface resources must be available.");
 		Assert(StudioLocalization.Translate("Test Center", "en-US") == "Test Center", "English must remain the fallback interface language.");
 		results.Add("PASS: repository discovery path and English/Spanish localization resources.");
@@ -338,10 +471,30 @@ ManifestVersion: 1.12.0
 		project.PackageIdentifier = "WingetManifestStudio";
 		Assert(ManifestService.Validate(project).Any(error => error.Contains("dot-separated", StringComparison.OrdinalIgnoreCase)),
 			"A package identifier without Publisher.Application sections must be rejected before official validation.");
-		project.PackageIdentifier = "ubidzz.WingetManifestStudio";
+		project.PackageIdentifier = "Fabrikam.Utility";
 		Assert(!ManifestService.Validate(project).Any(error => error.Contains("Package Identifier", StringComparison.OrdinalIgnoreCase)),
 			"A valid Publisher.Application package identifier must be accepted.");
 		results.Add("PASS: beginner-friendly package identifier validation.");
+	}
+
+	private static void TestDynamicPackageValidation(List<string> results)
+	{
+		ManifestProject project = SampleProject(Path.GetTempPath());
+		project.DefaultLocale = "not a locale";
+		project.Platform = "Windows.Desktop, Windows.Desktop";
+		project.RepairBehavior = "restart";
+		project.Installers[0].Architecture = "mips";
+		project.Installers[0].InstallerType = "custom-setup";
+		project.Installers[0].NestedInstallerType = "exe";
+		IReadOnlyList<string> errors = ManifestService.Validate(project);
+		Assert(errors.Any(error => error.Contains("Default Locale", StringComparison.OrdinalIgnoreCase))
+			&& errors.Any(error => error.Contains("Architecture", StringComparison.OrdinalIgnoreCase))
+			&& errors.Any(error => error.Contains("Installer Type", StringComparison.OrdinalIgnoreCase))
+			&& errors.Any(error => error.Contains("Repair Behavior", StringComparison.OrdinalIgnoreCase))
+			&& errors.Any(error => error.Contains("duplicate", StringComparison.OrdinalIgnoreCase))
+			&& errors.Any(error => error.Contains("nested installer", StringComparison.OrdinalIgnoreCase)),
+			"Package-independent validation must clearly identify invalid locale, architecture, installer behavior, duplicate, and ZIP-only values.");
+		results.Add("PASS: dynamic package values are checked against beginner-readable Winget choices.");
 	}
 
 	private static void TestCleanValidationFolder(string root, List<string> results)
@@ -365,20 +518,6 @@ ManifestVersion: 1.12.0
 		}
 		Assert(cleanFolder is null || !Directory.Exists(cleanFolder), "The temporary Winget validation folder must be removed.");
 		results.Add("PASS: clean validation staging excludes manifest backup folders.");
-	}
-
-	private static void TestReleaseUrlSynchronization(List<string> results)
-	{
-		string download = ManifestService.SynchronizeGitHubReleaseUrl(
-			"https://github.com/contoso/sample/releases/download/v1.0.22/Sample.msi", "1.0.22", "1.0.23");
-		string notes = ManifestService.SynchronizeGitHubReleaseUrl(
-			"https://github.com/contoso/sample/releases/tag/v1.0.22", "1.0.22", "1.0.23");
-		string unrelated = ManifestService.SynchronizeGitHubReleaseUrl(
-			"https://downloads.example.com/1.0.22/Sample.msi", "1.0.22", "1.0.23");
-		Assert(download.EndsWith("/releases/download/v1.0.23/Sample.msi", StringComparison.Ordinal), "GitHub release download URLs must follow an inspected installer version.");
-		Assert(notes.EndsWith("/releases/tag/v1.0.23", StringComparison.Ordinal), "GitHub release-notes URLs must follow an inspected installer version.");
-		Assert(unrelated.Contains("1.0.22", StringComparison.Ordinal), "Unrecognized download URLs must not be rewritten automatically.");
-		results.Add("PASS: inspected versions safely synchronize GitHub release URLs.");
 	}
 
 	private static void TestWingetCreateCommandModes(List<string> results)
@@ -420,13 +559,39 @@ ManifestVersion: 1.12.0
 		results.Add("PASS: local installer inspection and hashing.");
 	}
 
+	private static async Task TestFontInspectionAsync(string root, List<string> results)
+	{
+		string font = Path.Combine(root, "AnyPublisher-AnyFont.ttf");
+		File.WriteAllBytes(font, [0, 1, 0, 0, 0, 0, 0, 0]);
+		InstallerInspection inspection = await InstallerInspector.InspectAsync(font, string.Empty);
+		Assert(inspection.InstallerType == "font" && inspection.Architecture == "neutral" && inspection.Sha256.Length == 64,
+			"Font release files must be accepted without assuming an x64 application installer.");
+		results.Add("PASS: font packages inspect as neutral, package-independent installers.");
+	}
+
+	private static async Task TestZipInspectionAsync(string root, List<string> results)
+	{
+		string archivePath = Path.Combine(root, "AnyPublisher-AnyUtility.zip");
+		using (ZipArchive archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+		{
+			ZipArchiveEntry entry = archive.CreateEntry("release/AnyUtility.exe");
+			using Stream content = entry.Open();
+			content.Write([0x4d, 0x5a, 0, 0]);
+		}
+		InstallerInspection inspection = await InstallerInspector.InspectAsync(archivePath, string.Empty);
+		Assert(inspection.InstallerType == "zip" && inspection.Architecture == "neutral"
+			&& inspection.NestedInstallerType == "exe" && inspection.NestedInstallerFiles == "release\\AnyUtility.exe",
+			"ZIP inspection must discover its nested installer without assuming a publisher, product, or architecture.");
+		results.Add("PASS: ZIP inspection discovers package-independent nested installer paths.");
+	}
+
 	private static async Task TestRealInstallerAsync(string path, List<string> results)
 	{
 		Assert(File.Exists(path), "The supplied installer verification file does not exist.");
 		InstallerInspection inspection = await InstallerInspector.InspectAsync(path, string.Empty);
 		Assert(inspection.Sha256.Length == 64, "The supplied installer did not produce a SHA-256 hash.");
 		Assert(inspection.Signature.Status.Length > 0, "The supplied installer did not produce a digital-signature result.");
-		results.Add($"PASS: real installer inspection completed: {Path.GetFileName(path)}, {inspection.InstallerType}, {inspection.Signature.Status}.");
+		results.Add($"PASS: real installer inspection completed: {Path.GetFileName(path)}, {inspection.Architecture}, {inspection.InstallerType}, scope {inspection.Scope.IfEmpty("not declared")}, identity {(inspection.ProductCode.Length > 0 ? "found" : "not declared")}, {inspection.Signature.Status}.");
 	}
 
 	private static void TestRealManifestFolder(string folder, List<string> results)
@@ -494,6 +659,9 @@ ManifestVersion: 1.12.0
 	{
 		if (!condition) throw new InvalidOperationException(message);
 	}
+
+	private static bool HasRootKey(YamlMappingNode mapping, string key) =>
+		mapping.Children.Keys.OfType<YamlScalarNode>().Any(item => item.Value?.Equals(key, StringComparison.OrdinalIgnoreCase) == true);
 
 	private static void WriteReport(IEnumerable<string> lines)
 	{

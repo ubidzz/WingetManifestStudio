@@ -6,6 +6,22 @@ namespace ManifestUpdater;
 internal static partial class ManifestService
 {
 	private const long MaximumManifestBytes = 16L * 1024 * 1024;
+	private static readonly HashSet<string> InstallerTypes = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"msix", "msi", "appx", "exe", "zip", "inno", "nullsoft", "wix", "burn", "pwa", "portable", "font"
+	};
+	private static readonly HashSet<string> NestedInstallerTypes = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"msix", "msi", "appx", "exe", "inno", "nullsoft", "wix", "burn", "portable", "font"
+	};
+	private static readonly HashSet<string> Architectures = new(StringComparer.OrdinalIgnoreCase) { "x86", "x64", "arm", "arm64", "neutral" };
+	private static readonly HashSet<string> Scopes = new(StringComparer.OrdinalIgnoreCase) { "user", "machine" };
+	private static readonly HashSet<string> InstallModes = new(StringComparer.OrdinalIgnoreCase) { "interactive", "silent", "silentWithProgress" };
+	private static readonly HashSet<string> UpgradeBehaviors = new(StringComparer.OrdinalIgnoreCase) { "install", "uninstallPrevious", "deny" };
+	private static readonly HashSet<string> ElevationRequirements = new(StringComparer.OrdinalIgnoreCase) { "elevationRequired", "elevationProhibited", "elevatesSelf" };
+	private static readonly HashSet<string> Platforms = new(StringComparer.OrdinalIgnoreCase) { "Windows.Desktop", "Windows.Universal" };
+	private static readonly HashSet<string> RepairBehaviors = new(StringComparer.OrdinalIgnoreCase) { "modify", "uninstaller", "installer" };
+	private static readonly HashSet<string> UnsupportedArchitectures = new(StringComparer.OrdinalIgnoreCase) { "x86", "x64", "arm", "arm64" };
 
 	public static ManifestProject LoadProject(string folder)
 	{
@@ -151,53 +167,95 @@ internal static partial class ManifestService
 		Directory.Delete(folder, true);
 	}
 
-	public static string SynchronizeGitHubReleaseUrl(string url, string oldVersion, string newVersion)
-	{
-		string oldValue = oldVersion.Trim().TrimStart('v', 'V');
-		string newValue = newVersion.Trim().TrimStart('v', 'V');
-		if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(oldValue) || string.IsNullOrWhiteSpace(newValue) ||
-			string.Equals(oldValue, newValue, StringComparison.OrdinalIgnoreCase))
-			return url;
-		string pattern = @"(?<prefix>/releases/(?:download|tag)/v?)" + Regex.Escape(oldValue) + @"(?=(?:/|$|[?#]))";
-		return Regex.Replace(url, pattern, match => match.Groups["prefix"].Value + newValue, RegexOptions.IgnoreCase);
-	}
-
 	public static List<string> Validate(ManifestProject project)
 	{
 		List<string> errors = [];
 		if (string.IsNullOrWhiteSpace(project.PackageIdentifier))
-			errors.Add("Package Identifier is required. Use Publisher.Application, for example ubidzz.WingetManifestStudio.");
+			errors.Add("Package Identifier is required. Use Publisher.Application, for example Contoso.Sample.");
 		else if (project.PackageIdentifier.Length > 128)
 			errors.Add("Package Identifier is too long. It must be 128 characters or fewer.");
 		else if (!PackageIdRegex().IsMatch(project.PackageIdentifier))
-			errors.Add("Package Identifier must contain 2 to 8 dot-separated parts, such as ubidzz.WingetManifestStudio. Each part can be up to 32 characters and cannot contain spaces or Windows filename symbols.");
+			errors.Add("Package Identifier must contain 2 to 8 dot-separated parts, such as Contoso.Sample. Each part can be up to 32 characters and cannot contain spaces or Windows filename symbols.");
 		if (string.IsNullOrWhiteSpace(project.PackageVersion) || project.PackageVersion.StartsWith('v'))
 			errors.Add("Package Version is required and must not begin with v.");
+		else if (project.PackageVersion.Length > 128 || InvalidVersionCharactersRegex().IsMatch(project.PackageVersion))
+			errors.Add("Package Version cannot exceed 128 characters or contain Windows path symbols.");
 		if (string.IsNullOrWhiteSpace(project.DefaultLocale)) errors.Add("Default Locale is required, usually en-US.");
+		else if (project.DefaultLocale.Length > 20 || !LocaleRegex().IsMatch(project.DefaultLocale)) errors.Add("Default Locale must be a language tag of 20 characters or fewer, such as en-US, es-ES, fr-FR, or ja-JP.");
 		if (string.IsNullOrWhiteSpace(project.ManifestVersion)) errors.Add("Manifest Version is required, usually 1.12.0.");
+		else if (!ManifestVersionRegex().IsMatch(project.ManifestVersion)
+			|| project.ManifestVersion.Split('.').Any(part => !ushort.TryParse(part, out _)))
+			errors.Add("Manifest Version must use three numeric parts from 0 through 65535, such as 1.12.0.");
 		if (string.IsNullOrWhiteSpace(project.PackageName)) errors.Add("Package Name is required.");
 		if (string.IsNullOrWhiteSpace(project.Publisher)) errors.Add("Publisher is required.");
 		if (string.IsNullOrWhiteSpace(project.ShortDescription)) errors.Add("Short Description is required.");
 		if (string.IsNullOrWhiteSpace(project.License)) errors.Add("License is required.");
 		if (string.IsNullOrWhiteSpace(project.ManifestFolder)) errors.Add("Choose a manifest output folder.");
+		ValidateChoice("Installer Type", project.InstallerType, InstallerTypes, errors, allowBlank: true);
+		ValidateChoice("Nested Installer Type", project.NestedInstallerType, NestedInstallerTypes, errors, allowBlank: true);
+		ValidateChoice("Scope", project.Scope, Scopes, errors, allowBlank: true);
+		ValidateChoice("Upgrade Behavior", project.UpgradeBehavior, UpgradeBehaviors, errors, allowBlank: true);
+		ValidateChoice("Elevation Requirement", project.ElevationRequirement, ElevationRequirements, errors, allowBlank: true);
+		ValidateChoice("Repair Behavior", project.RepairBehavior, RepairBehaviors, errors, allowBlank: true);
+		ValidateList("Install Modes", project.InstallModes, InstallModes, errors);
+		ValidateList("Platforms", project.Platform, Platforms, errors);
+		ValidateList("Unsupported OS Architectures", project.UnsupportedOSArchitectures, UnsupportedArchitectures, errors);
+		ValidateSuccessCodes(project.InstallerSuccessCodes, errors);
+		ValidateOptionalUrl("Publisher URL", project.PublisherUrl, errors);
+		ValidateOptionalUrl("Publisher Support URL", project.PublisherSupportUrl, errors);
+		ValidateOptionalUrl("Privacy URL", project.PrivacyUrl, errors);
+		ValidateOptionalUrl("Package URL", project.PackageUrl, errors);
+		ValidateOptionalUrl("License URL", project.LicenseUrl, errors);
+		ValidateOptionalUrl("Copyright URL", project.CopyrightUrl, errors);
+		ValidateOptionalUrl("Purchase URL", project.PurchaseUrl, errors);
+		ValidateOptionalUrl("Release Notes URL", project.ReleaseNotesUrl, errors);
 		if (project.Installers.Count == 0) errors.Add("Add at least one installer.");
 		for (int index = 0; index < project.Installers.Count; index++)
 		{
 			InstallerArtifact installer = project.Installers[index];
 			string label = $"Installer {index + 1}";
+			string installerType = installer.InstallerType.IfEmpty(project.InstallerType);
+			string nestedInstallerType = installer.NestedInstallerType.IfEmpty(project.NestedInstallerType);
+			string nestedInstallerFiles = installer.NestedInstallerFiles.IfEmpty(project.NestedInstallerFiles);
+			string scope = installer.Scope.IfEmpty(project.Scope);
 			if (!Uri.TryCreate(installer.InstallerUrl, UriKind.Absolute, out Uri? uri)
 				|| (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
 					&& !uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)))
 				errors.Add($"{label} needs a valid public Installer URL.");
+			else if (installer.InstallerUrl.Length > 2048)
+				errors.Add($"{label} Installer URL is longer than Winget's 2048-character limit.");
 			else if (!project.AllowInsecureUrls && !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
 				errors.Add($"{label} must use HTTPS unless unsecured URLs are explicitly allowed.");
 			if (!ShaRegex().IsMatch(installer.Sha256)) errors.Add($"{label} needs a calculated 64-character SHA-256 hash.");
-			if (string.IsNullOrWhiteSpace(installer.Architecture)) errors.Add($"{label} needs an architecture.");
+			if (string.IsNullOrWhiteSpace(installer.Architecture)) errors.Add($"{label} needs an architecture. Inspect its local file or choose x86, x64, arm, arm64, or neutral.");
+			else if (!Architectures.Contains(installer.Architecture)) errors.Add($"{label} Architecture must be x86, x64, arm, arm64, or neutral.");
+			if (string.IsNullOrWhiteSpace(installerType)) errors.Add($"{label} needs an Installer Type. Inspect its local file or choose the correct type.");
+			else if (!InstallerTypes.Contains(installerType)) errors.Add($"{label} Installer Type '{installerType}' is not supported by Winget schema {project.ManifestVersion}.");
+			if (!string.IsNullOrWhiteSpace(scope) && !Scopes.Contains(scope)) errors.Add($"{label} Scope must be user, machine, or blank.");
+			if (installerType.Equals("zip", StringComparison.OrdinalIgnoreCase))
+			{
+				if (string.IsNullOrWhiteSpace(nestedInstallerType))
+					errors.Add($"{label} is a ZIP and needs its Nested Installer Type.");
+				else if (!NestedInstallerTypes.Contains(nestedInstallerType))
+					errors.Add($"{label} Nested Installer Type '{nestedInstallerType}' is not supported.");
+				try
+				{
+					IReadOnlyList<NestedInstallerFileEntry> nestedFiles = ParseNestedInstallerFiles(nestedInstallerFiles);
+					if (nestedFiles.Count == 0) errors.Add($"{label} is a ZIP and needs at least one file path from inside the archive.");
+					if (nestedFiles.Count > 1 && !nestedInstallerType.Equals("portable", StringComparison.OrdinalIgnoreCase))
+						errors.Add($"{label} can contain more than one nested file only when Nested Installer Type is portable.");
+					if (!nestedInstallerType.Equals("portable", StringComparison.OrdinalIgnoreCase) && nestedFiles.Any(file => file.PortableCommandAlias.Length > 0))
+						errors.Add($"{label} command aliases are only valid for nested portable files.");
+				}
+				catch (InvalidDataException ex) { errors.Add($"{label} ZIP contents: {ex.Message}"); }
+			}
+			else if (!string.IsNullOrWhiteSpace(nestedInstallerType) || !string.IsNullOrWhiteSpace(nestedInstallerFiles))
+				errors.Add($"{label} has nested installer values, but its Installer Type is not ZIP. Clear those ZIP-only fields or choose ZIP.");
+			if (!string.IsNullOrWhiteSpace(installer.SignatureSha256) && !ShaRegex().IsMatch(installer.SignatureSha256))
+				errors.Add($"{label} Signature SHA-256 must be blank or contain exactly 64 hexadecimal characters.");
 			if (installer.VerificationStatus.StartsWith("FAILED", StringComparison.OrdinalIgnoreCase))
 				errors.Add($"{label} failed public URL verification. The public download must match the attached local file.");
 		}
-		if (project.InstallerType.Equals("zip", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(project.NestedInstallerType))
-			errors.Add("Nested Installer Type is required when Installer Type is ZIP.");
 		if (!string.IsNullOrWhiteSpace(project.ReleaseDate)
 			&& !DateOnly.TryParseExact(project.ReleaseDate, "yyyy-MM-dd", out _))
 			errors.Add("Release Date must use YYYY-MM-DD.");
@@ -214,6 +272,59 @@ internal static partial class ManifestService
 				errors.Add($"{name} must be true, false, or blank.");
 		errors.AddRange(SchemaAwareYaml.ValidateAdvancedFields(project));
 		return errors;
+	}
+
+	internal static IReadOnlyList<NestedInstallerFileEntry> ParseNestedInstallerFiles(string value)
+	{
+		List<NestedInstallerFileEntry> result = [];
+		foreach (string item in (value ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n')
+			.Split(['\n', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+		{
+			string[] parts = item.Split('|', 2, StringSplitOptions.TrimEntries);
+			string relativePath = parts[0];
+			string alias = parts.Length > 1 ? parts[1] : string.Empty;
+			if (relativePath.Length == 0) throw new InvalidDataException("Each entry needs a relative file path.");
+			if (relativePath.Length > 512) throw new InvalidDataException($"'{relativePath}' is longer than 512 characters.");
+			if (Path.IsPathRooted(relativePath) || relativePath.Split(['\\', '/']).Any(segment => segment == ".."))
+				throw new InvalidDataException($"'{relativePath}' must be a safe path relative to the ZIP file.");
+			if (alias.Length > 40) throw new InvalidDataException($"The command alias '{alias}' is longer than 40 characters.");
+			result.Add(new NestedInstallerFileEntry(relativePath, alias));
+		}
+		return result;
+	}
+
+	private static void ValidateChoice(string name, string value, ISet<string> choices, ICollection<string> errors, bool allowBlank)
+	{
+		if (string.IsNullOrWhiteSpace(value))
+		{
+			if (!allowBlank) errors.Add(name + " is required.");
+			return;
+		}
+		if (!choices.Contains(value)) errors.Add($"{name} must be one of: {string.Join(", ", choices)}.");
+	}
+
+	private static void ValidateList(string name, string value, ISet<string> choices, ICollection<string> errors)
+	{
+		string[] items = SplitValues(value);
+		foreach (string item in items)
+			if (!choices.Contains(item)) errors.Add($"{name} contains '{item}'. Choose only: {string.Join(", ", choices)}.");
+		if (items.Length != items.Distinct(StringComparer.OrdinalIgnoreCase).Count()) errors.Add(name + " contains a duplicate value.");
+	}
+
+	private static void ValidateSuccessCodes(string value, ICollection<string> errors)
+	{
+		foreach (string code in SplitValues(value))
+			if (!long.TryParse(code, out long number) || number is < -2147483648L or > 4294967295L || number == 0)
+				errors.Add($"Extra Success Code '{code}' must be a non-zero whole number from -2147483648 through 4294967295.");
+	}
+
+	private static void ValidateOptionalUrl(string name, string value, ICollection<string> errors)
+	{
+		if (string.IsNullOrWhiteSpace(value)) return;
+		if (value.Length > 2048)
+			errors.Add(name + " is longer than Winget's 2048-character limit.");
+		else if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+			errors.Add(name + " must be a complete public HTTP or HTTPS address, or be left blank.");
 	}
 
 	private static string PatchVersionManifest(string text, ManifestProject project)
@@ -657,6 +768,15 @@ internal static partial class ManifestService
 
 	[GeneratedRegex(@"^[^.\s\\/:*?""<>|\x01-\x1f]{1,32}(\.[^.\s\\/:*?""<>|\x01-\x1f]{1,32}){1,7}$", RegexOptions.CultureInvariant)]
 	private static partial Regex PackageIdRegex();
+
+	[GeneratedRegex(@"[\\/:*?""<>|\x01-\x1f]", RegexOptions.CultureInvariant)]
+	private static partial Regex InvalidVersionCharactersRegex();
+
+	[GeneratedRegex(@"^([a-zA-Z]{2,3}|[iI]-[a-zA-Z]+|[xX]-[a-zA-Z]{1,8})(-[a-zA-Z]{1,8})*$", RegexOptions.CultureInvariant)]
+	private static partial Regex LocaleRegex();
+
+	[GeneratedRegex(@"^\d+\.\d+\.\d+$", RegexOptions.CultureInvariant)]
+	private static partial Regex ManifestVersionRegex();
 
 	[GeneratedRegex(@"^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant)]
 	private static partial Regex ShaRegex();

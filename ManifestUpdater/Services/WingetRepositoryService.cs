@@ -28,29 +28,34 @@ internal static class WingetRepositoryService
 
 	private static async Task<(bool found, string url, string latest)> CheckGitHubAsync(string identifier, CancellationToken cancellationToken)
 	{
-		string path = BuildRepositoryPath(identifier);
-		string apiUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/" + path;
-		using HttpResponseMessage response = await Client.GetAsync(apiUrl, cancellationToken);
-		if (response.StatusCode == HttpStatusCode.NotFound) return (false, string.Empty, string.Empty);
-		response.EnsureSuccessStatusCode();
-		JsonElement entries = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-		string[] versions = entries.ValueKind == JsonValueKind.Array
-			? entries.EnumerateArray()
-				.Where(item => item.TryGetProperty("type", out JsonElement type) && type.GetString() == "dir")
-				.Select(item => item.TryGetProperty("name", out JsonElement name) ? name.GetString() ?? string.Empty : string.Empty)
-				.Where(name => name.Length > 0)
-				.ToArray()
-			: [];
-		string latest = versions.OrderByDescending(VersionRank).ThenByDescending(value => value, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? string.Empty;
-		return (true, RepositoryBase + path, latest);
+		foreach (string root in new[] { "manifests", "fonts" })
+		{
+			string path = BuildRepositoryPath(identifier, root);
+			string apiUrl = "https://api.github.com/repos/microsoft/winget-pkgs/contents/" + path;
+			using HttpResponseMessage response = await Client.GetAsync(apiUrl, cancellationToken);
+			if (response.StatusCode == HttpStatusCode.NotFound) continue;
+			response.EnsureSuccessStatusCode();
+			JsonElement entries = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+			string[] versions = entries.ValueKind == JsonValueKind.Array
+				? entries.EnumerateArray()
+					.Where(item => item.TryGetProperty("type", out JsonElement type) && type.GetString() == "dir")
+					.Select(item => item.TryGetProperty("name", out JsonElement name) ? name.GetString() ?? string.Empty : string.Empty)
+					.Where(name => name.Length > 0)
+					.ToArray()
+				: [];
+			string latest = versions.OrderByDescending(VersionRank).ThenByDescending(value => value, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? string.Empty;
+			return (true, RepositoryBase + path, latest);
+		}
+		return (false, string.Empty, string.Empty);
 	}
 
-	internal static string BuildRepositoryPath(string identifier)
+	internal static string BuildRepositoryPath(string identifier, string root = "manifests")
 	{
 		string[] parts = identifier.Split('.', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 		if (parts.Length < 2) throw new ArgumentException("The package identifier needs at least two dot-separated parts.", nameof(identifier));
+		if (root is not ("manifests" or "fonts")) throw new ArgumentException("The repository root must be manifests or fonts.", nameof(root));
 		string partition = char.ToLowerInvariant(parts[0][0]).ToString();
-		return "manifests/" + string.Join('/', new[] { partition }.Concat(parts).Select(Uri.EscapeDataString));
+		return root + "/" + string.Join('/', new[] { partition }.Concat(parts).Select(Uri.EscapeDataString));
 	}
 
 	private static Version VersionRank(string value)
