@@ -41,6 +41,7 @@ jobs:
             ".github/workflows/codeql.yml",
             ".github/workflows/dependency-review.yml",
             "ManifestUpdater/WingetManifestStudio.csproj",
+            "ManifestUpdater/Services/StudioUpdateService.cs",
             "ManifestUpdater/Packaging/MSI/Package.wxs"
           )
 
@@ -68,11 +69,17 @@ jobs:
           }
 
           $projectText = Get-Content -Raw -LiteralPath "ManifestUpdater/WingetManifestStudio.csproj"
+          $updaterText = Get-Content -Raw -LiteralPath "ManifestUpdater/Services/StudioUpdateService.cs"
           $wixText = Get-Content -Raw -LiteralPath "ManifestUpdater/Packaging/MSI/Package.wxs"
           if (-not $projectText.Contains("StudioSetup.msi", [StringComparison]::Ordinal) -or
               -not $projectText.Contains("--self-contained true", [StringComparison]::Ordinal) -or
               -not $wixText.Contains("Winget Manifest Studio", [StringComparison]::Ordinal)) {
             throw "The publish project is not configured for a self-contained StudioSetup.msi release."
+          }
+          if (-not $updaterText.Contains('PortableAssetName = "WingetManifestStudio.exe"', [StringComparison]::Ordinal) -or
+              -not $updaterText.Contains('MsiAssetName = "StudioSetup.msi"', [StringComparison]::Ordinal) -or
+              -not $updaterText.Contains('repos/ubidzz/WingetManifestStudio/releases/latest', [StringComparison]::Ordinal)) {
+            throw "The built-in updater must use this repository and the exact portable and MSI release asset names."
           }
 
           foreach ($profilePath in @(

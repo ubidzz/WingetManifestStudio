@@ -5,7 +5,11 @@ internal static class StudioLocalization
 	public static readonly IReadOnlyList<StudioLanguage> AvailableLanguages =
 	[
 		new("en-US", "English"),
-		new("es-ES", "Español")
+		new("es-ES", "Español"),
+		new("fr-FR", "Français"),
+		new("de-DE", "Deutsch"),
+		new("pt-BR", "Português (Brasil)"),
+		new("ja-JP", "日本語")
 	];
 
 	private static readonly Dictionary<string, string> Spanish = new(StringComparer.Ordinal)
@@ -284,6 +288,33 @@ internal static class StudioLocalization
 		["INTERFACE LANGUAGE"] = "IDIOMA DE LA INTERFAZ",
 		["Interface language"] = "Idioma de la interfaz",
 		["Choose the language used by the Studio. Package data and generated YAML are never translated or changed."] = "Elige el idioma de Studio. Los datos del paquete y el YAML generado nunca se traducen ni se modifican.",
+		["APPLICATION UPDATES"] = "ACTUALIZACIONES DE LA APLICACIÓN",
+		["Installed with StudioSetup.msi. Updates use the matching MSI from the official GitHub release."] = "Instalado con StudioSetup.msi. Las actualizaciones usan el MSI correspondiente de la versión oficial de GitHub.",
+		["Portable copy. Updates replace this EXE with the matching file from the official GitHub release."] = "Copia portátil. Las actualizaciones reemplazan este EXE con el archivo correspondiente de la versión oficial de GitHub.",
+		["Checking the latest stable GitHub release..."] = "Buscando la última versión estable de GitHub...",
+		["Checking..."] = "Comprobando...",
+		["You have the latest stable version."] = "Ya tienes la última versión estable.",
+		["Check again"] = "Comprobar de nuevo",
+		["Version {0} is available: {1}"] = "La versión {0} está disponible: {1}",
+		["Update to {0}"] = "Actualizar a {0}",
+		["Update check needs attention: {0}"] = "La comprobación necesita atención: {0}",
+		["Try again"] = "Intentar de nuevo",
+		["Downloading and verifying the selected update..."] = "Descargando y verificando la actualización seleccionada...",
+		["Downloading..."] = "Descargando...",
+		["Updates are checked quietly after the Studio opens. You can also check now."] = "Las actualizaciones se comprueban en segundo plano después de abrir Studio. También puedes comprobar ahora.",
+		["Check for updates"] = "Buscar actualizaciones",
+		["Install Studio update?"] = "¿Instalar la actualización de Studio?",
+		["Winget Manifest Studio {0} is available."] = "Winget Manifest Studio {0} está disponible.",
+		["File: {0} ({1})"] = "Archivo: {0} ({1})",
+		["StudioSetup.msi will update the installed copy."] = "StudioSetup.msi actualizará la copia instalada.",
+		["The new portable EXE will replace this file after the Studio closes. A backup is restored automatically if replacement fails."] = "El nuevo EXE portátil reemplazará este archivo después de cerrar Studio. Si falla, se restaurará una copia de seguridad.",
+		["Download and install it now?"] = "¿Descargar e instalar ahora?",
+		["Interface language changed to {0}."] = "Idioma de la interfaz cambiado a {0}.",
+		["Downloading the verified Studio update from GitHub..."] = "Descargando desde GitHub la actualización verificada de Studio...",
+		["Downloading... {0}%"] = "Descargando... {0}%",
+		["Downloading and checking {0}: {1}%"] = "Descargando y comprobando {0}: {1}%",
+		["The verified update is ready. Winget Manifest Studio is closing so the update can finish."] = "La actualización verificada está lista. Winget Manifest Studio se cerrará para terminarla.",
+		["The update download was canceled. No application files were changed."] = "La descarga se canceló. No se modificó ningún archivo de la aplicación.",
 		["Build a Winget submission without editing YAML by hand."] = "Crea un envío de Winget sin editar YAML manualmente.",
 		["Create a new three-file manifest set or safely update an existing one. Local release files provide the real SHA-256 hash; public URLs tell Winget where users will download them."] = "Crea un conjunto nuevo de tres manifiestos o actualiza uno existente de forma segura. Los archivos locales proporcionan el SHA-256 real y las URL públicas indican a Winget dónde descargarlos.",
 		["LOCAL-FIRST\n\nGitHub token stays in Windows Credential Manager\nNo manifest overwritten without backup\nNo installer downloaded without confirmation"] = "PRIMERO LOCAL\n\nEl token de GitHub permanece en el Administrador de credenciales\nNingún manifiesto se reemplaza sin copia de seguridad\nNingún instalador se descarga sin confirmación",
@@ -307,6 +338,9 @@ internal static class StudioLocalization
 		["Need help?"] = "¿Necesitas ayuda?",
 		["Open the built-in beginner guide for field meanings, installer IDs, hashes, validation, and submission."] = "Abre la guía para principiantes sobre campos, identificadores de instalador, hashes, validación y envío.",
 		["Open Help & Guide"] = "Abrir ayuda y guía",
+		["Keep Winget Manifest Studio up to date"] = "Mantén Winget Manifest Studio actualizado",
+		["The Start page checks the latest stable GitHub release after the window is already open. An installed copy uses StudioSetup.msi; a portable copy replaces only its WingetManifestStudio.exe. Nothing downloads or installs until you choose the update button and confirm."] = "La página Inicio comprueba la última versión estable de GitHub después de abrir la ventana. Una copia instalada usa StudioSetup.msi; una copia portátil solo reemplaza su WingetManifestStudio.exe. Nada se descarga ni se instala hasta que eliges el botón de actualización y confirmas.",
+		["Open application updates"] = "Abrir actualizaciones de la aplicación",
 		["PACKAGE WORKSPACE"] = "ÁREA DE TRABAJO DEL PAQUETE",
 		["Every box below is editable. Loading a folder reads its YAML files only; it never downloads installers or changes the manifests."] = "Todos los campos siguientes se pueden editar. Cargar una carpeta solo lee sus YAML; nunca descarga instaladores ni cambia los manifiestos.",
 		["Winget schema"] = "Esquema de Winget",
@@ -504,20 +538,22 @@ internal static class StudioLocalization
 
 	public static string Translate(string english, string language)
 	{
-		if (!language.Equals("es-ES", StringComparison.OrdinalIgnoreCase)) return english;
-		if (Spanish.TryGetValue(english, out string? translated)) return translated;
-		foreach ((string EnglishPrefix, string SpanishPrefix) in new[]
+		IReadOnlyDictionary<string, string>? translations = GetTranslations(language);
+		if (translations is null) return english;
+		if (TryGetTranslation(translations, language, english, out string translated)) return translated;
+		(string requiredPrefix, string optionalPrefix, string requiredWord) = StudioAdditionalTranslations.Grammar(language);
+		foreach ((string EnglishPrefix, string LocalizedPrefix) in new[]
 		{
-			("Required. ", "Obligatorio. "),
-			("Optional. ", "Opcional. ")
+			("Required. ", requiredPrefix),
+			("Optional. ", optionalPrefix)
 		})
 		{
 			if (!english.StartsWith(EnglishPrefix, StringComparison.Ordinal)) continue;
 			string body = english[EnglishPrefix.Length..];
 			bool period = body.EndsWith(".", StringComparison.Ordinal);
 			if (period) body = body[..^1];
-			string localizedBody = Spanish.GetValueOrDefault(body, body);
-			return SpanishPrefix + localizedBody + (period ? "." : string.Empty);
+			string localizedBody = TryGetTranslation(translations, language, body, out string localized) ? localized : body;
+			return LocalizedPrefix + localizedBody + (period ? "." : string.Empty);
 		}
 		int prefixLength = 0;
 		while (prefixLength < english.Length && char.IsDigit(english[prefixLength])) prefixLength++;
@@ -525,21 +561,84 @@ internal static class StudioLocalization
 		{
 			while (prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength])) prefixLength++;
 			string action = english[prefixLength..];
-			if (Spanish.TryGetValue(action, out translated)) return english[..prefixLength] + translated;
+			if (TryGetTranslation(translations, language, action, out translated)) return english[..prefixLength] + translated;
 		}
 		const string requiredSuffix = "  * Required";
 		if (english.EndsWith(requiredSuffix, StringComparison.Ordinal))
 		{
 			string field = english[..^requiredSuffix.Length];
-			return Spanish.GetValueOrDefault(field, field) + "  * Obligatorio";
+			return (TryGetTranslation(translations, language, field, out string localized) ? localized : field) + "  * " + requiredWord;
 		}
 		const string requiredMarker = " *";
 		if (english.EndsWith(requiredMarker, StringComparison.Ordinal))
 		{
 			string field = english[..^requiredMarker.Length];
-			return Spanish.GetValueOrDefault(field, field) + requiredMarker;
+			return (TryGetTranslation(translations, language, field, out string localized) ? localized : field) + requiredMarker;
+		}
+		const string returnSuffix = ". The Studio will return you to the correct page.";
+		if (english.EndsWith(returnSuffix, StringComparison.Ordinal))
+		{
+			string message = english[..^returnSuffix.Length];
+			if (TryGetTranslation(translations, language, message, out string localizedMessage)
+				&& TryGetTranslation(translations, language, returnSuffix[2..], out string localizedSuffix))
+				return localizedMessage + ". " + localizedSuffix;
 		}
 		return english;
+	}
+
+	public static bool HasCompleteTranslation(string english, string language)
+	{
+		IReadOnlyDictionary<string, string>? translations = GetTranslations(language);
+		if (translations is null) return language.Equals("en-US", StringComparison.OrdinalIgnoreCase);
+		if (TryGetTranslation(translations, language, english, out _)) return true;
+		foreach (string prefix in new[] { "Required. ", "Optional. " })
+		{
+			if (!english.StartsWith(prefix, StringComparison.Ordinal)) continue;
+			string body = english[prefix.Length..].TrimEnd('.');
+			return TryGetTranslation(translations, language, body, out _);
+		}
+		int prefixLength = 0;
+		while (prefixLength < english.Length && char.IsDigit(english[prefixLength])) prefixLength++;
+		if (prefixLength > 0 && prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength]))
+		{
+			while (prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength])) prefixLength++;
+			return TryGetTranslation(translations, language, english[prefixLength..], out _);
+		}
+		const string requiredSuffix = "  * Required";
+		if (english.EndsWith(requiredSuffix, StringComparison.Ordinal))
+			return TryGetTranslation(translations, language, english[..^requiredSuffix.Length], out _);
+		const string requiredMarker = " *";
+		if (english.EndsWith(requiredMarker, StringComparison.Ordinal))
+			return TryGetTranslation(translations, language, english[..^requiredMarker.Length], out _);
+		const string returnSuffix = ". The Studio will return you to the correct page.";
+		if (english.EndsWith(returnSuffix, StringComparison.Ordinal))
+			return TryGetTranslation(translations, language, english[..^returnSuffix.Length], out _)
+				&& TryGetTranslation(translations, language, returnSuffix[2..], out _);
+		return false;
+	}
+
+	private static IReadOnlyDictionary<string, string>? GetTranslations(string language) =>
+		language.Equals("es-ES", StringComparison.OrdinalIgnoreCase) ? Spanish : StudioAdditionalTranslations.Get(language);
+
+	private static bool TryGetTranslation(
+		IReadOnlyDictionary<string, string> translations,
+		string language,
+		string english,
+		out string translated)
+	{
+		IReadOnlyDictionary<string, string>? runtime = StudioRuntimeTranslations.Get(language);
+		if (runtime is not null && runtime.TryGetValue(english, out string? runtimeValue) && runtimeValue is not null)
+		{
+			translated = runtimeValue;
+			return true;
+		}
+		if (translations.TryGetValue(english, out string? resourceValue) && resourceValue is not null)
+		{
+			translated = resourceValue;
+			return true;
+		}
+		translated = english;
+		return false;
 	}
 }
 

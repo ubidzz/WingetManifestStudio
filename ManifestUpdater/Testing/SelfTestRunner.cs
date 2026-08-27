@@ -16,6 +16,7 @@ internal static class SelfTestRunner
 			Directory.CreateDirectory(root);
 			TestNewProject(root, results);
 			TestPreservingUpdate(root, results);
+			TestDisplayVersionNormalization(root, results);
 			TestNestedManifestDiscovery(root, results);
 			TestStructuralReorderAndExtraLocale(root, results);
 			TestOptionalRootPreservation(root, results);
@@ -33,6 +34,7 @@ internal static class SelfTestRunner
 			TestInstalledVerificationMatching(results);
 			TestRepositoryPathAndLocalization(results);
 			TestGitHubReleaseParsing(results);
+			TestStudioUpdater(results);
 			TestProfileRoundTrip(root, results);
 			await TestInstallerInspectionAsync(results);
 			await TestInstallerTechnologyDetectionAsync(root, results);
@@ -42,7 +44,10 @@ internal static class SelfTestRunner
 			await TestWingetHealthDiagnosticAsync(results);
 			TestAuthenticodeInspection(root, results);
 			if (args.Any(argument => string.Equals(argument, "--network-tests", StringComparison.OrdinalIgnoreCase)))
+			{
 				await TestPublicImportServicesAsync(root, results);
+				await TestStudioUpdateFeedAsync(results);
+			}
 			if (args.Any(argument => string.Equals(argument, "--official-schema-tests", StringComparison.OrdinalIgnoreCase)))
 				await TestOfficialGuidedSchemaAsync(root, results);
 			int installerIndex = Array.FindIndex(args, argument => string.Equals(argument, "--verify-installer", StringComparison.OrdinalIgnoreCase));
@@ -401,7 +406,24 @@ ManifestVersion: 1.12.0
 			"Font package identifiers must map to the separate official fonts repository root.");
 		Assert(StudioLocalization.Translate("Test Center", "es-ES") == "Centro de pruebas", "Spanish interface resources must be available.");
 		Assert(StudioLocalization.Translate("Test Center", "en-US") == "Test Center", "English must remain the fallback interface language.");
-		results.Add("PASS: repository discovery path and English/Spanish localization resources.");
+		Dictionary<string, string> additionalLanguages = new(StringComparer.OrdinalIgnoreCase)
+		{
+			["fr-FR"] = "Centre de tests",
+			["de-DE"] = "Testcenter",
+			["pt-BR"] = "Central de testes",
+			["ja-JP"] = "テストセンター"
+		};
+		Assert(StudioLocalization.AvailableLanguages.Count == 6, "The language selector must offer all six supported interface languages.");
+		foreach ((string language, string expectedTestCenter) in additionalLanguages)
+		{
+			Assert(StudioLocalization.IsSupported(language)
+				&& StudioLocalization.Translate("Test Center", language) == expectedTestCenter
+				&& StudioLocalization.Translate("Package identifier", language) != "Package identifier"
+				&& StudioLocalization.Translate("Check for updates", language) != "Check for updates"
+				&& StudioLocalization.Translate("Required. Package identifier", language) != "Required. Package identifier",
+				$"Core interface and required-field guidance must be translated for {language}.");
+		}
+		results.Add("PASS: English, Spanish, French, German, Brazilian Portuguese, and Japanese localization resources.");
 	}
 
 	private static void TestAuthenticodeInspection(string root, List<string> results)
@@ -505,6 +527,29 @@ ManifestVersion: 1.12.0
 		Assert(after.PackageIdentifier == before.PackageIdentifier && after.Installers.Count == 1, "Profile fields and installers must round-trip.");
 		Assert(!File.ReadAllText(path).Contains("token", StringComparison.OrdinalIgnoreCase), "Profiles must not contain authentication tokens.");
 		results.Add("PASS: token-free profile round-trip.");
+	}
+
+	private static void TestDisplayVersionNormalization(string root, List<string> results)
+	{
+		ManifestProject project = SampleProject(Path.Combine(root, "display-version"));
+		InstallerArtifact installer = project.Installers[0];
+		installer.DisplayName = "Sample";
+		installer.Publisher = "Contoso";
+		installer.ProductCode = "{11111111-1111-1111-1111-111111111111}";
+		installer.UpgradeCode = "{22222222-2222-2222-2222-222222222222}";
+		installer.ProductVersion = project.PackageVersion;
+		string equalVersionManifest = ManifestService.Generate(project).Files
+			.Single(pair => pair.Key.Contains(".installer.", StringComparison.OrdinalIgnoreCase)).Value;
+		Assert(equalVersionManifest.Contains("AppsAndFeaturesEntries:", StringComparison.Ordinal)
+			&& !equalVersionManifest.Contains("DisplayVersion:", StringComparison.Ordinal),
+			"DisplayVersion must be omitted when it duplicates PackageVersion while other AppsAndFeatures fields remain.");
+
+		installer.ProductVersion = project.PackageVersion + ".0";
+		string distinctVersionManifest = ManifestService.Generate(project).Files
+			.Single(pair => pair.Key.Contains(".installer.", StringComparison.OrdinalIgnoreCase)).Value;
+		Assert(distinctVersionManifest.Contains("DisplayVersion: 1.0.0.0", StringComparison.Ordinal),
+			"DisplayVersion must remain when the installed version genuinely differs from PackageVersion.");
+		results.Add("PASS: redundant AppsAndFeatures DisplayVersion values are removed without losing distinct installed versions.");
 	}
 
 	private static void TestBeginnerValidation(List<string> results)
@@ -783,6 +828,79 @@ ManifestVersion: 1.12.0
 			&& !GitHubReleaseService.IsSupportedInstallerAsset("checksums.txt"),
 			"GitHub release import must support latest-release URLs and ignore non-installer assets.");
 		results.Add("PASS: dynamic GitHub release URL and asset parsing.");
+	}
+
+	private static void TestStudioUpdater(List<string> results)
+	{
+		const string releaseJson = """
+		{
+		  "tag_name": "v9.8.7",
+		  "name": "Winget Manifest Studio 9.8.7",
+		  "body": "Updater verification release",
+		  "html_url": "https://github.com/ubidzz/WingetManifestStudio/releases/tag/v9.8.7",
+		  "published_at": "2026-08-27T10:00:00Z",
+		  "draft": false,
+		  "prerelease": false,
+		  "assets": [
+		    {
+		      "name": "WingetManifestStudio.exe",
+		      "browser_download_url": "https://github.com/ubidzz/WingetManifestStudio/releases/download/v9.8.7/WingetManifestStudio.exe",
+		      "size": 120000000,
+		      "digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		    },
+		    {
+		      "name": "StudioSetup.msi",
+		      "browser_download_url": "https://github.com/ubidzz/WingetManifestStudio/releases/download/v9.8.7/StudioSetup.msi",
+		      "size": 121000000,
+		      "digest": "sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+		    }
+		  ]
+		}
+		""";
+		StudioUpdateRelease portable = StudioUpdateService.ParseReleaseJson(releaseJson, StudioDistributionKind.Portable)
+			?? throw new InvalidOperationException("The stable updater test release was ignored.");
+		StudioUpdateRelease installed = StudioUpdateService.ParseReleaseJson(releaseJson, StudioDistributionKind.MsiInstalled)
+			?? throw new InvalidOperationException("The stable updater test release was ignored.");
+		Assert(portable.Asset.Name == StudioUpdateService.PortableAssetName
+			&& installed.Asset.Name == StudioUpdateService.MsiAssetName
+			&& portable.Version == new Version(9, 8, 7, 0),
+			"The updater must select the EXE for portable copies and StudioSetup.msi for installed copies.");
+		Assert(StudioUpdateService.IsExecutableInInstallLocation(
+			@"C:\Users\Sample\AppData\Local\Programs\Winget Manifest Studio\WingetManifestStudio.exe",
+			@"C:\Users\Sample\AppData\Local\Programs\Winget Manifest Studio")
+			&& !StudioUpdateService.IsExecutableInInstallLocation(@"D:\Portable\WingetManifestStudio.exe", @"C:\Programs\Winget Manifest Studio"),
+			"MSI and portable distribution detection must be based on the running application path.");
+		Assert(StudioUpdateService.TryParseVersion("v1.2.3", out Version? stable) && stable == new Version(1, 2, 3, 0),
+			"Updater version tags must support the repository's v-prefixed release format.");
+		ProcessStartInfo msi = StudioUpdateService.CreateMsiUpdateLauncher(@"C:\Updates\StudioSetup.msi");
+		ProcessStartInfo portableLauncher = StudioUpdateService.CreatePortableUpdateLauncher(
+			@"C:\Updates\WingetManifestStudio.exe", @"C:\Portable\WingetManifestStudio.exe", 1234);
+		Assert(msi.FileName.Equals("msiexec.exe", StringComparison.OrdinalIgnoreCase)
+			&& msi.Arguments.Contains("StudioSetup.msi", StringComparison.OrdinalIgnoreCase)
+			&& portableLauncher.FileName.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase)
+			&& portableLauncher.ArgumentList.Contains("-EncodedCommand"),
+			"Both distribution modes must create a non-interactive update launcher.");
+		string prereleaseJson = releaseJson.Replace("\"prerelease\": false", "\"prerelease\": true", StringComparison.Ordinal);
+		Assert(StudioUpdateService.ParseReleaseJson(prereleaseJson, StudioDistributionKind.Portable) is null,
+			"Automatic updates must ignore prerelease and draft releases.");
+		string untrustedJson = releaseJson.Replace(
+			"https://github.com/ubidzz/WingetManifestStudio/releases/download/v9.8.7/WingetManifestStudio.exe",
+			"https://example.invalid/WingetManifestStudio.exe", StringComparison.Ordinal);
+		bool rejectedUntrustedAsset = false;
+		try { _ = StudioUpdateService.ParseReleaseJson(untrustedJson, StudioDistributionKind.Portable); }
+		catch (InvalidDataException) { rejectedUntrustedAsset = true; }
+		Assert(rejectedUntrustedAsset, "The updater must reject files outside this repository's official HTTPS release path.");
+		results.Add("PASS: stable GitHub updates select, verify, and launch the correct MSI or portable asset.");
+	}
+
+	private static async Task TestStudioUpdateFeedAsync(List<string> results)
+	{
+		StudioUpdateCheck check = await StudioUpdateService.CheckAsync(true);
+		StudioUpdateRelease release = check.LatestRelease
+			?? throw new InvalidOperationException("The live Studio update feed did not return a stable release.");
+		Assert(release.Asset.Name is StudioUpdateService.PortableAssetName or StudioUpdateService.MsiAssetName,
+			"The live Studio release feed must publish the exact update asset required by this distribution mode.");
+		results.Add($"PASS: live Studio update feed returned stable release {release.Tag} and {release.Asset.Name}.");
 	}
 
 	private static async Task TestInstallerInspectionAsync(List<string> results)

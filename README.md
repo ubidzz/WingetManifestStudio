@@ -31,6 +31,7 @@ It is designed for first-time package publishers while retaining the controls ex
 - Confirm the installed package and version.
 - Submit through Microsoft's official WingetCreate workflow.
 - Keep GitHub authentication in WingetCreate and Windows Credential Manager.
+- Check the official GitHub Releases feed in the background and install stable Studio updates with one confirmed click.
 
 ## Requirements
 
@@ -48,6 +49,18 @@ WingetCreate is only required for its official commands and submission workflow.
 Download `StudioSetup.msi` from the repository's [Releases](https://github.com/ubidzz/WingetManifestStudio/releases) page and run it normally. Administrator permission is not required to edit manifests. Windows may request approval only for operations that inherently require elevation, such as enabling Winget local-manifest testing or running an installer that requires it.
 
 Both `WingetManifestStudio.exe` and `StudioSetup.msi` are self-contained x64 releases. They include the .NET 10 Windows Desktop runtime so a new user can open the Studio immediately without waiting for Windows to locate or install a shared runtime.
+
+### Application updates
+
+The Start screen identifies whether the running copy came from `StudioSetup.msi` or is the portable `WingetManifestStudio.exe`. After the window is already open, the Studio quietly checks the repository's latest stable GitHub release. A newer version appears as one clear update button; nothing is downloaded or installed without confirmation.
+
+- An MSI-installed copy downloads and opens the release's exact `StudioSetup.msi` asset so Windows Installer upgrades the existing installation.
+- A portable copy downloads the release's exact `WingetManifestStudio.exe` asset, verifies it, closes the current copy, replaces it, and reopens it. A temporary backup is restored if replacement fails.
+- Release-asset links are restricted to this repository, the downloaded Windows file type is checked, SHA-256 is calculated, and GitHub's SHA-256 digest is enforced when the API provides one.
+- Only published stable releases are offered. Drafts and prereleases are ignored.
+- The public update check does not use or request a GitHub token. Results are cached for four hours to avoid unnecessary API requests.
+
+Small Studio fixes can therefore be delivered through a new GitHub release without immediately updating the Winget community manifest. The GitHub release must still use a version newer than the running application and contain both exact asset names: `WingetManifestStudio.exe` and `StudioSetup.msi`.
 
 ## Guided Workflow
 
@@ -186,7 +199,7 @@ Portable EXEs cannot always be distinguished safely from normal EXE installers, 
 
 ## Interface Languages
 
-The Start and Help pages both provide a visible interface-language setting for English and Spanish. Navigation, guided actions, Review, Test Center, primary field labels, and beginner instructions are translated; manifest data, package metadata, YAML, installer output, and official Winget output are never translated or modified. The choice is stored in the current Windows user's local application settings and is not written into package profiles.
+The Start and Help pages both provide a visible interface-language setting for English, Spanish, French, German, Brazilian Portuguese, and Japanese. All normal Studio-owned interface text is translated, including navigation, buttons, field labels, placeholders, beginner explanations, Review, Test Center, update guidance, and the full Help walkthrough. Package data, manifest metadata, YAML, file paths, installer output, and exact Winget or WingetCreate command output are intentionally never translated or modified. The choice is stored in the current Windows user's local application settings and is not written into package profiles.
 
 ## Build from Source
 

@@ -15,6 +15,8 @@ public partial class MainForm : Form
 	private static readonly Color MutedColor = StudioPalette.SecondaryText;
 	private static readonly Color AccentColor = StudioPalette.Accent;
 	private static readonly Color SuccessColor = StudioPalette.Success;
+	private const string DefaultOfficialToolOutput = "Official command output appears here. Question-based commands open a separate WingetCreate console. GitHub tokens are managed by WingetCreate, not saved in this application.";
+	private const string DefaultTestOutput = "Your latest test result appears here. Start with the highlighted action above; the Studio will tell you exactly what to do next.";
 	private static readonly HashSet<string> RequiredProjectFields = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"PackageIdentifier", "PackageVersion", "DefaultLocale", "ManifestVersion", "ManifestFolder",
@@ -23,6 +25,7 @@ public partial class MainForm : Form
 
 	private ManifestProject project = new();
 	private enum ReviewProgress { Editing, Previewed, Saved, ValidationFailed, Validated }
+	private enum StudioUpdateUiState { Idle, Checking, Current, Available, Error, Downloading }
 	private readonly Dictionary<string, Control> fields = new(StringComparer.OrdinalIgnoreCase);
 	private DataGridView installerGrid = null!;
 	private RichTextBox previewBox = null!;
@@ -66,8 +69,20 @@ public partial class MainForm : Form
 	private bool wingetCreateReady;
 	private System.Windows.Forms.Timer? wingetCreateStartupTimer;
 	private System.Windows.Forms.Timer? tokenStatusTimer;
+	private System.Windows.Forms.Timer? studioUpdateStartupTimer;
+	private Label studioUpdateTitleLabel = null!;
+	private Label studioUpdateDescriptionLabel = null!;
+	private Label studioUpdateStatusLabel = null!;
+	private Button studioUpdateButton = null!;
+	private StudioUpdateRelease? availableStudioUpdate;
+	private StudioDistributionKind studioDistribution = StudioDistributionKind.Portable;
+	private StudioUpdateUiState studioUpdateUiState;
+	private string studioUpdateError = string.Empty;
+	private bool studioUpdateCheckRunning;
 	private string latestTestReport = "No test report has been generated yet.";
 	private readonly Dictionary<Control, string> originalInterfaceText = new(ReferenceEqualityComparer.Instance);
+	private readonly Dictionary<StudioTextBox, string> originalPlaceholderText = new(ReferenceEqualityComparer.Instance);
+	private string currentStatusEnglish = "Ready";
 	private bool applyingLanguage;
 	private string successfulPreflightFingerprint = string.Empty;
 	private ReviewProgress reviewProgress;
@@ -157,16 +172,17 @@ public partial class MainForm : Form
 			SetStatus("Ready. Start a new package or explicitly load a manifest folder.");
 			if (uiTestMode)
 			{
-				modeLabel.Text = "SAFE UI TEST MODE";
+				SetModeText("SAFE UI TEST MODE");
 				return;
 			}
 
-			modeLabel.Text = "LOCAL AUTHORING READY • WINGETCREATE STARTING SHORTLY";
+			SetModeText("LOCAL AUTHORING READY • WINGETCREATE STARTING SHORTLY");
 			busyProgress.Visible = false;
 			toolLoadingProgress.Visible = false;
 			SetStatus("Manifest Studio is ready. WingetCreate official tools will load shortly in the background.");
 			ScheduleToolAvailabilityCheck();
 			StartManifestSchemaRecommendation();
+			ScheduleStudioUpdateCheck();
 		}
 		catch (Exception ex)
 		{
@@ -209,12 +225,134 @@ public partial class MainForm : Form
 			wingetCreateStartupTimer?.Dispose();
 			wingetCreateStartupTimer = null;
 			if (IsDisposed || Disposing) return;
-			modeLabel.Text = "LOCAL AUTHORING READY • LOADING WINGETCREATE";
+			SetModeText("LOCAL AUTHORING READY • LOADING WINGETCREATE");
 			toolLoadingProgress.Visible = true;
 			SetStatus("Local manifest tools are ready. Preparing WingetCreate in the background...");
 			StartToolAvailabilityCheck();
 		};
 		wingetCreateStartupTimer.Start();
+	}
+
+	private void ScheduleStudioUpdateCheck()
+	{
+		if (uiTestMode || studioUpdateStartupTimer is not null || IsDisposed || Disposing) return;
+		studioUpdateStartupTimer = new System.Windows.Forms.Timer { Interval = 6000 };
+		studioUpdateStartupTimer.Tick += async (_, _) =>
+		{
+			studioUpdateStartupTimer?.Stop();
+			studioUpdateStartupTimer?.Dispose();
+			studioUpdateStartupTimer = null;
+			if (IsDisposed || Disposing) return;
+			await CheckForStudioUpdateAsync(false);
+		};
+		studioUpdateStartupTimer.Start();
+	}
+
+	private async Task CheckForStudioUpdateAsync(bool forceRefresh)
+	{
+		if (studioUpdateCheckRunning || IsDisposed || Disposing) return;
+		studioUpdateCheckRunning = true;
+		studioUpdateUiState = StudioUpdateUiState.Checking;
+		studioUpdateError = string.Empty;
+		RefreshStudioUpdateCard();
+		try
+		{
+			StudioUpdateCheck check = await StudioUpdateService.CheckAsync(forceRefresh);
+			if (IsDisposed || Disposing) return;
+			studioDistribution = check.Distribution;
+			availableStudioUpdate = check.UpdateAvailable ? check.LatestRelease : null;
+			studioUpdateUiState = check.UpdateAvailable ? StudioUpdateUiState.Available : StudioUpdateUiState.Current;
+		}
+		catch (Exception ex)
+		{
+			if (IsDisposed || Disposing) return;
+			availableStudioUpdate = null;
+			studioUpdateUiState = StudioUpdateUiState.Error;
+			studioUpdateError = ex.Message;
+		}
+		finally
+		{
+			studioUpdateCheckRunning = false;
+			if (!IsDisposed && !Disposing) RefreshStudioUpdateCard();
+		}
+	}
+
+	private async void StudioUpdateButton_Click(object? sender, EventArgs eventArgs)
+	{
+		if (uiTestMode)
+		{
+			SetStatus("TEST: The update button is connected without contacting GitHub or changing application files.");
+			return;
+		}
+		if (studioUpdateUiState != StudioUpdateUiState.Available || availableStudioUpdate is null)
+		{
+			await CheckForStudioUpdateAsync(true);
+			return;
+		}
+		await InstallStudioUpdateAsync(availableStudioUpdate);
+	}
+
+	private async Task InstallStudioUpdateAsync(StudioUpdateRelease release)
+	{
+		string currentExecutable = Environment.ProcessPath ?? string.Empty;
+		if (currentExecutable.Length == 0)
+		{
+			ShowError("The application update could not start", new InvalidOperationException("The current Winget Manifest Studio application path is unavailable."));
+			return;
+		}
+		if (studioDistribution == StudioDistributionKind.Portable
+			&& !StudioUpdateService.CanReplacePortableExecutable(currentExecutable, out string writeError))
+		{
+			ShowError("The portable application cannot update itself", new InvalidOperationException(writeError));
+			return;
+		}
+		if (!ConfirmSaveOrDiscardChanges("install the Studio update")) return;
+
+		string distributionText = studioDistribution == StudioDistributionKind.MsiInstalled
+			? T("StudioSetup.msi will update the installed copy.")
+			: T("The new portable EXE will replace this file after the Studio closes. A backup is restored automatically if replacement fails.");
+		string confirmation = string.Format(T("Winget Manifest Studio {0} is available."), release.VersionText)
+			+ "\r\n\r\n" + string.Format(T("File: {0} ({1})"), release.Asset.Name, FormatSize(release.Asset.Size))
+			+ "\r\n" + distributionText + "\r\n\r\n" + T("Download and install it now?");
+		if (MessageBox.Show(this, confirmation, T("Install Studio update?"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+		SetBusy(true, T("Downloading the verified Studio update from GitHub..."));
+		studioUpdateUiState = StudioUpdateUiState.Downloading;
+		RefreshStudioUpdateCard();
+		try
+		{
+			CancellationToken cancellationToken = operationCancellation?.Token ?? CancellationToken.None;
+			Progress<int> progress = new(percent =>
+			{
+				if (IsDisposed || Disposing) return;
+				studioUpdateButton.Text = string.Format(T("Downloading... {0}%"), percent);
+				studioUpdateStatusLabel.Text = string.Format(T("Downloading and checking {0}: {1}%"), release.Asset.Name, percent);
+			});
+			DownloadedStudioUpdate downloaded = await StudioUpdateService.DownloadAsync(release, progress, cancellationToken);
+			ProcessStartInfo launcher = studioDistribution == StudioDistributionKind.MsiInstalled
+				? StudioUpdateService.CreateMsiUpdateLauncher(downloaded.FilePath)
+				: StudioUpdateService.CreatePortableUpdateLauncher(downloaded.FilePath, currentExecutable, Environment.ProcessId);
+			if (Process.Start(launcher) is null)
+				throw new InvalidOperationException("Windows did not start the downloaded update.");
+
+			SetBusy(false, T("The verified update is ready. Winget Manifest Studio is closing so the update can finish."));
+			closingAfterConfirmation = true;
+			BeginInvoke(Close);
+		}
+		catch (OperationCanceledException)
+		{
+			SetBusy(false, T("The update download was canceled. No application files were changed."));
+			studioUpdateUiState = StudioUpdateUiState.Available;
+			RefreshStudioUpdateCard();
+		}
+		catch (Exception ex)
+		{
+			SetBusy(false);
+			studioUpdateUiState = StudioUpdateUiState.Error;
+			studioUpdateError = ex.Message;
+			RefreshStudioUpdateCard();
+			ShowError("The application update could not finish", ex);
+		}
 	}
 
 	protected override void OnFormClosed(FormClosedEventArgs eventArgs)
@@ -225,6 +363,9 @@ public partial class MainForm : Form
 		tokenStatusTimer?.Stop();
 		tokenStatusTimer?.Dispose();
 		tokenStatusTimer = null;
+		studioUpdateStartupTimer?.Stop();
+		studioUpdateStartupTimer?.Dispose();
+		studioUpdateStartupTimer = null;
 		fieldErrors.Dispose();
 		base.OnFormClosed(eventArgs);
 	}
@@ -243,12 +384,12 @@ public partial class MainForm : Form
 		if (!wingetCreateReady || IsDisposed || Disposing) return;
 
 		bool tokenStored = WingetCommandService.IsGitHubTokenStored();
-		modeLabel.Text = tokenStored
+		SetModeText(tokenStored
 			? "WINGETCREATE READY • TOKEN STORED"
-			: "WINGETCREATE READY • NO TOKEN STORED";
-		securityBadge.Text = tokenStored
+			: "WINGETCREATE READY • NO TOKEN STORED");
+		SetSecurityText(tokenStored
 			? "LOCAL-FIRST • TOKEN STORED"
-			: "LOCAL-FIRST • NO TOKEN STORED";
+			: "LOCAL-FIRST • NO TOKEN STORED");
 	}
 
 	private void StartToolAvailabilityCheck()
@@ -301,12 +442,12 @@ public partial class MainForm : Form
 			if (!available)
 			{
 				wingetCreateReady = false;
-				modeLabel.Text = "LOCAL AUTHORING READY • WINGETCREATE OPTIONAL";
+				SetModeText("LOCAL AUTHORING READY • WINGETCREATE OPTIONAL");
 				SetStatus("Local manifest tools are ready. Install WingetCreate only when you need the official command tools.");
 				return;
 			}
 
-			modeLabel.Text = "LOCAL AUTHORING READY • PREPARING WINGETCREATE";
+			SetModeText("LOCAL AUTHORING READY • PREPARING WINGETCREATE");
 			SetStatus("Local manifest tools are ready. Preparing WingetCreate in the background...");
 			bool warmed = await Task.Run(
 				() => WingetCommandService.WarmUpAsync(TimeSpan.FromSeconds(20)));
@@ -322,7 +463,7 @@ public partial class MainForm : Form
 		{
 			if (IsDisposed || Disposing) return;
 			wingetCreateReady = false;
-			modeLabel.Text = "LOCAL AUTHORING READY • WINGETCREATE OPTIONAL";
+			SetModeText("LOCAL AUTHORING READY • WINGETCREATE OPTIONAL");
 			SetStatus("Local manifest tools are ready. WingetCreate could not be prepared in the background.");
 		}
 		finally
@@ -427,6 +568,7 @@ public partial class MainForm : Form
 		content.Padding = new Padding(18, 20, 18, 30);
 		content.Controls.Add(CreateHeroCard());
 		content.Controls.Add(CreateLanguageSettingsCard());
+		content.Controls.Add(CreateStudioUpdateCard());
 		content.Controls.Add(CreateWorkflowCard("1", "Choose how to start", "Create a blank package, load YAML files already on this computer, or enter an existing Winget package ID to download its current manifests into a new working copy.",
 			("Load existing manifests", async (_, _) => await LoadManifestsAsync()),
 			("Import existing Winget package", async (_, _) => await ImportExistingPackageAsync()),
@@ -694,6 +836,8 @@ public partial class MainForm : Form
 		content.Padding = new Padding(18, 20, 18, 30);
 		content.Controls.Add(CreateLanguageSettingsCard());
 		content.Controls.Add(CreateInfoStrip("HOW TO USE THIS SOFTWARE", "This guide explains every screen and the information Winget needs. You can read it at any time; the buttons only take you to the screen being described."));
+		content.Controls.Add(CreateWorkflowCard("↻", "Keep Winget Manifest Studio up to date", "The Start page checks the latest stable GitHub release after the window is already open. An installed copy uses StudioSetup.msi; a portable copy replaces only its WingetManifestStudio.exe. Nothing downloads or installs until you choose the update button and confirm.",
+			("Open application updates", (_, _) => SelectTab("Start Here"))));
 		content.Controls.Add(CreateWorkflowCard("1", "Start or open a manifest project", "For a first release, choose New Project. For an update, load a local YAML folder or choose Import Existing Winget Package and enter its exact package ID. Repository import downloads the newest manifests into a separate working-copy folder and never overwrites an existing manifest folder.",
 			("Go to Package Details", (_, _) => SelectTab("Package Details"))));
 		content.Controls.Add(CreateWorkflowCard("2", "Enter the package identity", "Package Identifier is the permanent Winget name, normally Publisher.Application. Enter Publisher and Package Name first, then use Suggest Package ID if you want help. Package Version has no leading v. Keep the identifier unchanged for updates.",
@@ -861,7 +1005,7 @@ public partial class MainForm : Form
 				Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
 		};
 		toolOutputBox.Font = new Font("Cascadia Mono", 9F);
-		toolOutputBox.Text = "Official command output appears here. Question-based commands open a separate WingetCreate console. GitHub tokens are managed by WingetCreate, not saved in this application.";
+		toolOutputBox.Text = DefaultOfficialToolOutput;
 		root.Controls.Add(toolOutputBox, 0, 3);
 		page.Controls.Add(root);
 		return page;
@@ -1977,15 +2121,14 @@ public partial class MainForm : Form
 		bool installPassed = string.Equals(successfulLocalInstallFingerprint, fingerprint, StringComparison.Ordinal);
 		bool installedVerified = string.Equals(verifiedInstalledFingerprint, fingerprint, StringComparison.Ordinal);
 		bool wingetReady = wingetHealth is not { IsReady: false };
-		bool spanish = currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase);
 		string wingetState = wingetHealth is null
-			? spanish ? "WINGET NO COMPROBADO" : "WINGET NOT CHECKED"
+			? T("WINGET NOT CHECKED")
 			: wingetHealth.IsReady
-				? $"WINGET {(spanish ? "LISTO" : "READY")}{(wingetHealth.Version.Length > 0 ? " · " + wingetHealth.Version : string.Empty)}"
-				: spanish ? "WINGET REQUIERE ATENCIÓN" : "WINGET NEEDS ATTENTION";
+				? T("WINGET READY") + (wingetHealth.Version.Length > 0 ? " · " + wingetHealth.Version : string.Empty)
+				: T("WINGET NEEDS ATTENTION");
 		string projectState = projectReady
-			? spanish ? "PROYECTO LISTO" : "PROJECT READY"
-			: spanish ? $"EL PROYECTO REQUIERE {errors.Count} CORRECCIÓN{(errors.Count == 1 ? string.Empty : "ES")}" : $"PROJECT NEEDS {errors.Count} FIX{(errors.Count == 1 ? string.Empty : "ES")}";
+			? T("PROJECT READY")
+			: string.Format(T(errors.Count == 1 ? "PROJECT NEEDS {0} FIX" : "PROJECT NEEDS {0} FIXES"), errors.Count);
 		testPlanLabel.Text = $"{projectState}   •   {wingetState}";
 		testPlanLabel.ForeColor = projectReady && wingetReady ? AccentColor : StudioPalette.Warning;
 
@@ -2677,7 +2820,7 @@ public partial class MainForm : Form
 				wingetCreateReady = false;
 				toolRunButton.Enabled = false;
 				toolLoadingProgress.Visible = true;
-				modeLabel.Text = "LOCAL AUTHORING READY • LOADING WINGETCREATE";
+				SetModeText("LOCAL AUTHORING READY • LOADING WINGETCREATE");
 				BeginInvoke(new Action(StartToolAvailabilityCheck));
 			}
 		}
@@ -3471,7 +3614,7 @@ public partial class MainForm : Form
 		testOutputBox.ReadOnly = true;
 		testOutputBox.DetectUrls = true;
 		testOutputBox.Font = new Font("Cascadia Mono", 9F);
-		testOutputBox.Text = "Your latest test result appears here. Start with the highlighted action above; the Studio will tell you exactly what to do next.";
+		testOutputBox.Text = DefaultTestOutput;
 		testOutputBox.LinkClicked += (_, eventArgs) =>
 		{
 			if (!uiTestMode && Uri.TryCreate(eventArgs.LinkText, UriKind.Absolute, out Uri? uri))
@@ -3571,18 +3714,16 @@ public partial class MainForm : Form
 				previewModeButton.Enabled = false;
 				if (ready)
 				{
-					simplePreviewText = currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase)
-						? "NO HAY NADA QUE CORREGIR\r\n\r\n[OK] Toda la información obligatoria del paquete está completa.\r\n[OK] Cada instalador tiene URL pública, arquitectura y hash SHA-256.\r\n\r\nSIGUIENTE: Elige Previsualizar cambios. Todavía no se guardará nada."
-						: "NOTHING NEEDS FIXING\r\n\r\n[OK] All required package information is present.\r\n[OK] Every installer has a public URL, architecture, and SHA-256 hash.\r\n\r\nNEXT: Click Preview Changes. Nothing will be saved yet.";
+					simplePreviewText = T("NOTHING NEEDS FIXING") + "\r\n\r\n"
+						+ T("[OK] All required package information is present.") + "\r\n"
+						+ T("[OK] Every installer has a public URL, architecture, and SHA-256 hash.") + "\r\n\r\n"
+						+ T("NEXT: Click Preview Changes. Nothing will be saved yet.");
 				}
 				else
 				{
-					bool spanish = currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase);
-					StringBuilder fixes = new(spanish ? "QUÉ REQUIERE ATENCIÓN\r\n\r\n" : "WHAT NEEDS ATTENTION\r\n\r\n");
+					StringBuilder fixes = new(T("WHAT NEEDS ATTENTION") + "\r\n\r\n");
 					for (int index = 0; index < errors.Count; index++) fixes.AppendLine($"{index + 1}. {LocalizeReadinessMessage(errors[index])}.");
-					fixes.Append(spanish
-						? "\r\nAbre 2 Paquete para corregir la información o 3 Instaladores para problemas de archivo, URL, arquitectura y hash."
-						: "\r\nOpen 2 Package for package information or 3 Installers for release-file, URL, architecture, and hash problems.");
+					fixes.Append("\r\n" + T("Open 2 Package for package information or 3 Installers for release-file, URL, architecture, and hash problems."));
 					simplePreviewText = fixes.ToString();
 				}
 				showingTechnicalPreview = false;
@@ -3638,10 +3779,8 @@ public partial class MainForm : Form
 
 		if (!projectReady)
 		{
-			bool spanish = currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase);
-			readinessLabel.Text = spanish
-				? $"EL PROYECTO REQUIERE {errors.Count} CORRECCIÓN{(errors.Count == 1 ? string.Empty : "ES")}   •   REVISIÓN BLOQUEADA"
-				: $"PROJECT NEEDS {errors.Count} FIX{(errors.Count == 1 ? string.Empty : "ES")}   •   REVIEW LOCKED";
+			readinessLabel.Text = string.Format(T(errors.Count == 1 ? "PROJECT NEEDS {0} FIX" : "PROJECT NEEDS {0} FIXES"), errors.Count)
+				+ "   •   " + T("REVIEW LOCKED");
 			readinessLabel.ForeColor = StudioPalette.Warning;
 			reviewActionTitleLabel.Text = "Fix the package information";
 			reviewActionDescriptionLabel.Text = SimplifyReadinessError(errors[0]) + ". The Studio will return you to the correct page.";
@@ -3663,9 +3802,8 @@ public partial class MainForm : Form
 		}
 		else if (!previewComplete)
 		{
-			readinessLabel.Text = currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase)
-				? $"LISTO PARA REVISAR   •   {project.PackageIdentifier}   •   {project.Installers.Count} INSTALADOR{(project.Installers.Count == 1 ? string.Empty : "ES")}"
-				: $"READY TO REVIEW   •   {project.PackageIdentifier}   •   {project.Installers.Count} INSTALLER{(project.Installers.Count == 1 ? string.Empty : "S")}";
+			readinessLabel.Text = T("READY TO REVIEW") + $"   •   {project.PackageIdentifier}   •   {project.Installers.Count} "
+				+ T(project.Installers.Count == 1 ? "INSTALLER" : "INSTALLERS");
 			readinessLabel.ForeColor = AccentColor;
 			reviewActionTitleLabel.Text = "Preview the proposed changes";
 			reviewActionDescriptionLabel.Text = "Builds the exact manifest changes in memory and explains them below. No files are written.";
@@ -3897,13 +4035,13 @@ public partial class MainForm : Form
 			if (columnName is nameof(InstallerArtifact.ProductCode) or nameof(InstallerArtifact.UpgradeCode))
 			{
 				eventArgs.ToolTipText = UsesMsiIdentityCodes(installer.InstallerType)
-					? "This value is read automatically from the selected MSI file. 'Not found in MSI' means the package author did not include it."
-					: "This installer does not provide standardized MSI identity codes. Winget treats these fields as optional, so leave them blank unless you know the installed Apps & Features correlation value.";
+					? T("This value is read automatically from the selected MSI file. 'Not found in MSI' means the package author did not include it.")
+					: T("This installer does not provide standardized MSI identity codes. Winget treats these fields as optional, so leave them blank unless you know the installed Apps & Features correlation value.");
 			}
 			else if (columnName == nameof(InstallerArtifact.NestedInstallerType))
-				eventArgs.ToolTipText = "Required only for ZIP packages. Use the installer technology inside the archive, such as exe, msi, portable, or font.";
+				eventArgs.ToolTipText = T("Required only for ZIP packages. Use the installer technology inside the archive, such as exe, msi, portable, or font.");
 			else if (columnName == nameof(InstallerArtifact.NestedInstallerFiles))
-				eventArgs.ToolTipText = "Required only for ZIP packages. Enter paths inside the ZIP separated by semicolons. For portable files, add an optional command after |, for example tools\\sample.exe | sample.";
+				eventArgs.ToolTipText = T("Required only for ZIP packages. Enter paths inside the ZIP separated by semicolons. For portable files, add an optional command after |, for example tools\\sample.exe | sample.");
 		};
 		return grid;
 	}
@@ -4202,6 +4340,122 @@ public partial class MainForm : Form
 		return card;
 	}
 
+	private Control CreateStudioUpdateCard()
+	{
+		studioDistribution = StudioUpdateService.DetectDistribution();
+		StudioCard card = new()
+		{
+			AccessibleName = "Winget Manifest Studio application updates",
+			Width = 1160,
+			Height = 126,
+			ColumnCount = 3,
+			RowCount = 3,
+			BackColor = CardColor,
+			Padding = new Padding(18, 12, 18, 12),
+			Margin = new Padding(0, 0, 0, 12),
+			CornerRadius = 10
+		};
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
+		card.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+		card.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+		card.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		card.Controls.Add(new Label
+		{
+			Text = "APPLICATION UPDATES",
+			Dock = DockStyle.Fill,
+			ForeColor = AccentColor,
+			Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty
+		}, 0, 0);
+		studioUpdateTitleLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			ForeColor = Color.White,
+			Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty
+		};
+		studioUpdateDescriptionLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 8.8F),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty,
+			AutoEllipsis = true
+		};
+		studioUpdateStatusLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 8.8F),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = new Padding(0, 0, 16, 0),
+			AutoEllipsis = true
+		};
+		studioUpdateButton = CreateButton("Check for updates", StudioUpdateButton_Click) as Button ?? throw new InvalidOperationException();
+		studioUpdateButton.Dock = DockStyle.Fill;
+		studioUpdateButton.Margin = new Padding(5, 3, 5, 3);
+		card.Controls.Add(studioUpdateTitleLabel, 1, 0);
+		card.Controls.Add(studioUpdateDescriptionLabel, 0, 1);
+		card.SetColumnSpan(studioUpdateDescriptionLabel, 2);
+		card.Controls.Add(studioUpdateButton, 2, 0);
+		card.SetRowSpan(studioUpdateButton, 3);
+		card.Controls.Add(studioUpdateStatusLabel, 0, 2);
+		card.SetColumnSpan(studioUpdateStatusLabel, 2);
+		RefreshStudioUpdateCard();
+		return card;
+	}
+
+	private void RefreshStudioUpdateCard()
+	{
+		if (studioUpdateTitleLabel is null || studioUpdateTitleLabel.IsDisposed) return;
+		studioUpdateTitleLabel.Text = $"Winget Manifest Studio {StudioUpdateService.CurrentVersionText}";
+		studioUpdateDescriptionLabel.Text = studioDistribution == StudioDistributionKind.MsiInstalled
+			? T("Installed with StudioSetup.msi. Updates use the matching MSI from the official GitHub release.")
+			: T("Portable copy. Updates replace this EXE with the matching file from the official GitHub release.");
+
+		string status;
+		string action;
+		bool enabled = true;
+		switch (studioUpdateUiState)
+		{
+			case StudioUpdateUiState.Checking:
+				status = T("Checking the latest stable GitHub release...");
+				action = T("Checking...");
+				enabled = false;
+				break;
+			case StudioUpdateUiState.Current:
+				status = T("You have the latest stable version.");
+				action = T("Check again");
+				break;
+			case StudioUpdateUiState.Available when availableStudioUpdate is not null:
+				status = string.Format(T("Version {0} is available: {1}"), availableStudioUpdate.VersionText, availableStudioUpdate.Title);
+				action = string.Format(T("Update to {0}"), availableStudioUpdate.VersionText);
+				break;
+			case StudioUpdateUiState.Error:
+				status = string.Format(T("Update check needs attention: {0}"), studioUpdateError);
+				action = T("Try again");
+				break;
+			case StudioUpdateUiState.Downloading:
+				status = T("Downloading and verifying the selected update...");
+				action = T("Downloading...");
+				enabled = false;
+				break;
+			default:
+				status = T("Updates are checked quietly after the Studio opens. You can also check now.");
+				action = T("Check for updates");
+				break;
+		}
+		studioUpdateStatusLabel.Text = status;
+		studioUpdateButton.Text = action;
+		studioUpdateButton.AccessibleName = action;
+		studioUpdateButton.Enabled = enabled;
+	}
+
 	private static TabPage NewPage(string title) => new(title) { AccessibleName = title, BackColor = PageColor, ForeColor = Color.White, Padding = new Padding(18) };
 	private static TableLayoutPanel NewRoot()
 	{
@@ -4329,6 +4583,11 @@ public partial class MainForm : Form
 			Record(securityBadge.Right + 12 <= minimizeButton.Left, "Header badge and window buttons do not overlap",
 				$"badge right {securityBadge.Right}, minimize left {minimizeButton.Left}");
 			Record(closeButton.Left > minimizeButton.Right, "Minimize and Close buttons are aligned with a visible gap");
+			SelectTab("Start Here");
+			Record(studioUpdateButton.Text == "Check for updates"
+				&& studioUpdateTitleLabel.Text.Contains(StudioUpdateService.CurrentVersionText, StringComparison.Ordinal)
+				&& studioUpdateDescriptionLabel.Text.Contains(studioDistribution == StudioDistributionKind.MsiInstalled ? "StudioSetup.msi" : "Portable", StringComparison.OrdinalIgnoreCase),
+				"Start clearly identifies the current version and the correct installed or portable update method");
 			Size originalSize = Size;
 			Size[] layoutMatrix =
 			[
@@ -4669,20 +4928,48 @@ public partial class MainForm : Form
 			Record(HasUnsavedChanges(), "Unsaved project edits are detected before replacement or close");
 			Write("ReleaseNotes", originalReleaseNotes);
 			MarkProjectClean();
-			Record(languageBoxes.Count == 2 && languageBoxes.All(selector => selector.Items.Count == StudioLocalization.AvailableLanguages.Count),
-				"Language settings are visible on Start and Help");
+			Record(languageBoxes.Count == 2 && StudioLocalization.AvailableLanguages.Count == 6
+				&& languageBoxes.All(selector => selector.Items.Count == StudioLocalization.AvailableLanguages.Count),
+				"Language settings on Start and Help offer all six interface languages");
 			ApplyInterfaceLanguage("es-ES");
+			IReadOnlyList<string> spanishUntranslated = FindUntranslatedInterfaceText("es-ES");
 			Record(navigationButtons["Start Here"].Text.Contains("Inicio", StringComparison.Ordinal)
 				&& reviewProgressSteps[0].Title == "Vista previa"
 				&& testProgressSteps[0].Title == "Comprobación previa"
 				&& installerGrid.Columns[nameof(InstallerArtifact.InstallerUrl)] is DataGridViewColumn installerUrlColumn
 				&& installerUrlColumn.HeaderText == "URL PÚBLICA DEL INSTALADOR"
+				&& studioUpdateButton.Text == "Buscar actualizaciones"
 				&& reviewActionDescriptionLabel.Text.StartsWith("La versión del paquete", StringComparison.Ordinal)
 				&& previewBox.Text.StartsWith("QUÉ REQUIERE ATENCIÓN", StringComparison.Ordinal)
+				&& spanishUntranslated.Count == 0
 				&& Descendants(this).OfType<Label>().Any(label => label.Text.StartsWith("Dependencias del paquete", StringComparison.Ordinal)),
-				"Spanish translates navigation, package fields, installer columns, Review, and Test Center");
+				"Spanish translates all normal interface text, including package fields, Review, and Test Center",
+				spanishUntranslated.Count == 0 ? null : "Untranslated: " + string.Join(" | ", spanishUntranslated));
+			Dictionary<string, string> additionalNavigation = new(StringComparer.OrdinalIgnoreCase)
+			{
+				["fr-FR"] = "Centre de tests",
+				["de-DE"] = "Testcenter",
+				["pt-BR"] = "Central de testes",
+				["ja-JP"] = "テストセンター"
+			};
+			foreach ((string language, string expectedTestCenter) in additionalNavigation)
+			{
+				ApplyInterfaceLanguage(language);
+				PerformLayout();
+				workspaceTabs.PerformLayout();
+				IReadOnlyList<string> untranslated = FindUntranslatedInterfaceText(language);
+				Record(navigationButtons["Test Center"].Text.Contains(expectedTestCenter, StringComparison.Ordinal)
+					&& studioUpdateButton.Text != "Check for updates"
+					&& installerGrid.Columns[nameof(InstallerArtifact.InstallerUrl)] is DataGridViewColumn translatedInstallerUrlColumn
+					&& translatedInstallerUrlColumn.HeaderText != "PUBLIC INSTALLER URL"
+					&& languageBoxes.All(selector => selector.SelectedIndex == StudioLocalization.IndexOf(language))
+					&& navigationButtons.Values.All(button => button.Right <= navigationPanel.ClientSize.Width)
+					&& untranslated.Count == 0,
+					$"{StudioLocalization.AvailableLanguages[StudioLocalization.IndexOf(language)].DisplayName} translates all normal interface text and fits the interface",
+					untranslated.Count == 0 ? null : "Untranslated: " + string.Join(" | ", untranslated));
+			}
 			ApplyInterfaceLanguage("en-US");
-			Record(navigationButtons["Start Here"].Text == "1  Start" && reviewProgressSteps[0].Title == "Preview"
+			Record(navigationButtons["Start Here"].Text == "1  Start" && studioUpdateButton.Text == "Check for updates" && reviewProgressSteps[0].Title == "Preview"
 				&& reviewActionDescriptionLabel.Text.StartsWith("Package Version", StringComparison.Ordinal)
 				&& previewBox.Text.StartsWith("WHAT NEEDS ATTENTION", StringComparison.Ordinal),
 				"Switching back to English restores the original interface text");
@@ -4714,6 +5001,8 @@ public partial class MainForm : Form
 	{
 		if (!uiTestMode) throw new InvalidOperationException("Interface verification language changes are available only in safe UI test mode.");
 		ApplyInterfaceLanguage(language);
+		string displayName = StudioLocalization.AvailableLanguages[StudioLocalization.IndexOf(language)].DisplayName;
+		SetStatus(string.Format(T("Interface language changed to {0}."), displayName));
 	}
 
 	private async Task<string?> PickFolderAsync(string title, string description, string? initialPath)
@@ -4843,7 +5132,8 @@ public partial class MainForm : Form
 		string language = StudioLocalization.CodeAt(source.SelectedIndex);
 		StudioStateStore.SetLanguage(language);
 		ApplyInterfaceLanguage(language);
-		SetStatus(language == "es-ES" ? "Idioma cambiado a Español." : "Language changed to English.");
+		string displayName = StudioLocalization.AvailableLanguages[StudioLocalization.IndexOf(language)].DisplayName;
+		SetStatus(string.Format(T("Interface language changed to {0}."), displayName));
 	}
 
 	private void ApplyInterfaceLanguage(string language)
@@ -4853,11 +5143,14 @@ public partial class MainForm : Form
 		applyingLanguage = true;
 		try
 		{
+			if (!originalInterfaceText.ContainsKey(modeLabel)) originalInterfaceText[modeLabel] = modeLabel.Text;
+			if (!originalInterfaceText.ContainsKey(securityBadge)) originalInterfaceText[securityBadge] = securityBadge.Text;
 			foreach (Control control in DescendantsAndSelf(this))
 			{
 				bool localizable = control is Button or TabPage or CheckBox or Label || ReferenceEquals(control, this);
 				if (!localizable || ReferenceEquals(control, statusLabel) || ReferenceEquals(control, modeLabel)
-					|| ReferenceEquals(control, securityBadge) || ReferenceEquals(control, readinessLabel))
+					|| ReferenceEquals(control, securityBadge) || ReferenceEquals(control, readinessLabel)
+					|| ReferenceEquals(control, testPlanLabel))
 					continue;
 				if (!originalInterfaceText.TryGetValue(control, out string? english))
 				{
@@ -4865,6 +5158,16 @@ public partial class MainForm : Form
 					originalInterfaceText[control] = english;
 				}
 				control.Text = StudioLocalization.Translate(english, language);
+			}
+			foreach (StudioTextBox textBox in DescendantsAndSelf(this).OfType<StudioTextBox>())
+			{
+				if (string.IsNullOrWhiteSpace(textBox.PlaceholderText)) continue;
+				if (!originalPlaceholderText.TryGetValue(textBox, out string? englishPlaceholder))
+				{
+					englishPlaceholder = textBox.PlaceholderText;
+					originalPlaceholderText[textBox] = englishPlaceholder;
+				}
+				textBox.PlaceholderText = StudioLocalization.Translate(englishPlaceholder, language);
 			}
 			int languageIndex = StudioLocalization.IndexOf(language);
 			foreach (StudioComboBox selector in languageBoxes)
@@ -4874,13 +5177,23 @@ public partial class MainForm : Form
 			string[] testTitles = ["Safe preflight", "Allow testing", "Test install", "Verify result"];
 			for (int index = 0; index < testProgressSteps.Length; index++) testProgressSteps[index].Title = T(testTitles[index]);
 			LocalizeInstallerGridHeaders();
+			if (originalInterfaceText.TryGetValue(modeLabel, out string? modeEnglish)) modeLabel.Text = T(modeEnglish);
+			if (originalInterfaceText.TryGetValue(securityBadge, out string? securityEnglish)) securityBadge.Text = T(securityEnglish);
+			statusLabel.Text = T(currentStatusEnglish);
+			if (IsDefaultLocalizedText(toolOutputBox.Text, DefaultOfficialToolOutput)) toolOutputBox.Text = T(DefaultOfficialToolOutput);
+			if (IsDefaultLocalizedText(testOutputBox.Text, DefaultTestOutput)) testOutputBox.Text = T(DefaultTestOutput);
 			UpdateNavigationState();
+			RefreshStudioUpdateCard();
 		}
 		finally { applyingLanguage = false; }
 		if (workspaceInitialized) RefreshReadiness();
 	}
 
 	private string T(string english) => StudioLocalization.Translate(english, currentInterfaceLanguage);
+
+	private static bool IsDefaultLocalizedText(string current, string english) =>
+		StudioLocalization.AvailableLanguages.Any(language =>
+			current.Equals(StudioLocalization.Translate(english, language.Code), StringComparison.Ordinal));
 
 	private void SetInterfaceText(Control control, string english)
 	{
@@ -4906,9 +5219,9 @@ public partial class MainForm : Form
 	private string LocalizeReadinessMessage(string error)
 	{
 		string simple = SimplifyReadinessError(error);
-		if (!currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase)) return simple;
 		string translated = T(simple);
 		if (!translated.Equals(simple, StringComparison.Ordinal)) return translated;
+		if (!currentInterfaceLanguage.Equals("es-ES", StringComparison.OrdinalIgnoreCase)) return simple;
 		return simple
 			.Replace("Installer ", "Instalador ", StringComparison.Ordinal)
 			.Replace(" needs a valid public download URL", " necesita una URL pública de descarga válida", StringComparison.OrdinalIgnoreCase)
@@ -4944,6 +5257,20 @@ public partial class MainForm : Form
 			if (installerGrid.Columns[property] is DataGridViewColumn column) column.HeaderText = T(english);
 	}
 
+	private IReadOnlyList<string> FindUntranslatedInterfaceText(string language)
+	{
+		HashSet<string> missing = new(StringComparer.Ordinal);
+		foreach (string english in originalInterfaceText.Values.Concat(originalPlaceholderText.Values))
+		{
+			if (string.IsNullOrWhiteSpace(english) || !System.Text.RegularExpressions.Regex.IsMatch(english, "[A-Za-z]{3,}")) continue;
+			if (english.Equals("Winget Manifest Studio", StringComparison.Ordinal)
+				|| english.StartsWith("Winget Manifest Studio ", StringComparison.Ordinal)
+				|| english is "English" or "Español" or "SHA-256") continue;
+			if (!StudioLocalization.HasCompleteTranslation(english, language)) missing.Add(english);
+		}
+		return missing.Order(StringComparer.Ordinal).ToArray();
+	}
+
 	private static IEnumerable<Control> DescendantsAndSelf(Control root)
 	{
 		yield return root;
@@ -4952,7 +5279,23 @@ public partial class MainForm : Form
 				yield return descendant;
 	}
 
-	private void SetStatus(string message) => statusLabel.Text = message;
+	private void SetStatus(string message)
+	{
+		currentStatusEnglish = message;
+		statusLabel.Text = T(message);
+	}
+
+	private void SetModeText(string english)
+	{
+		originalInterfaceText[modeLabel] = english;
+		modeLabel.Text = T(english);
+	}
+
+	private void SetSecurityText(string english)
+	{
+		originalInterfaceText[securityBadge] = english;
+		securityBadge.Text = T(english);
+	}
 	private string Read(string key) => fields.TryGetValue(key, out Control? control) ? control.Text.Trim() : string.Empty;
 	private void Write(string key, string value) { if (fields.TryGetValue(key, out Control? control)) control.Text = value ?? string.Empty; }
 	private void ShowError(string heading, Exception ex)
