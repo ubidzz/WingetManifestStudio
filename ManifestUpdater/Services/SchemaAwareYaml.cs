@@ -401,8 +401,9 @@ internal static class SchemaAwareYaml
 	{
 		YamlSequenceNode? entries = Sequence(installer, "AppsAndFeaturesEntries");
 		YamlMappingNode? entry = entries?.Children.OfType<YamlMappingNode>().FirstOrDefault();
+		string displayVersion = DistinctDisplayVersion(artifact.ProductVersion, project.PackageVersion);
 		bool hasData = !string.IsNullOrWhiteSpace(artifact.DisplayName) || !string.IsNullOrWhiteSpace(artifact.Publisher)
-			|| !string.IsNullOrWhiteSpace(artifact.ProductVersion) || !string.IsNullOrWhiteSpace(artifact.ProductCode)
+			|| !string.IsNullOrWhiteSpace(displayVersion) || !string.IsNullOrWhiteSpace(artifact.ProductCode)
 			|| !string.IsNullOrWhiteSpace(artifact.UpgradeCode);
 		if (!hasData && entry is null) return;
 		entries ??= new YamlSequenceNode();
@@ -410,10 +411,21 @@ internal static class SchemaAwareYaml
 		if (entries.Children.Count == 0) entries.Add(entry);
 		SetOptionalScalar(entry, "DisplayName", artifact.DisplayName.IfEmpty(project.PackageName));
 		SetOptionalScalar(entry, "Publisher", artifact.Publisher);
-		SetOptionalScalar(entry, "DisplayVersion", artifact.ProductVersion);
+		SetOptionalScalar(entry, "DisplayVersion", displayVersion);
 		SetOptionalScalar(entry, "ProductCode", artifact.ProductCode.ToUpperInvariant());
 		SetOptionalScalar(entry, "UpgradeCode", artifact.UpgradeCode.ToUpperInvariant());
-		SetNode(installer, "AppsAndFeaturesEntries", entries);
+		if (entry.Children.Count == 0) entries.Children.Remove(entry);
+		if (entries.Children.Count == 0) Remove(installer, "AppsAndFeaturesEntries");
+		else SetNode(installer, "AppsAndFeaturesEntries", entries);
+	}
+
+	private static string DistinctDisplayVersion(string productVersion, string packageVersion)
+	{
+		string displayVersion = (productVersion ?? string.Empty).Trim();
+		return displayVersion.Length > 0
+			&& !displayVersion.Equals((packageVersion ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase)
+				? displayVersion
+				: string.Empty;
 	}
 
 	private static YamlMappingNode? FindBestInstallerNode(
