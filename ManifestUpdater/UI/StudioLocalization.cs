@@ -538,11 +538,9 @@ internal static class StudioLocalization
 
 	public static string Translate(string english, string language)
 	{
-		IReadOnlyDictionary<string, string>? translations = language.Equals("es-ES", StringComparison.OrdinalIgnoreCase)
-			? Spanish
-			: StudioAdditionalTranslations.Get(language);
+		IReadOnlyDictionary<string, string>? translations = GetTranslations(language);
 		if (translations is null) return english;
-		if (translations.TryGetValue(english, out string? translated)) return translated;
+		if (TryGetTranslation(translations, language, english, out string translated)) return translated;
 		(string requiredPrefix, string optionalPrefix, string requiredWord) = StudioAdditionalTranslations.Grammar(language);
 		foreach ((string EnglishPrefix, string LocalizedPrefix) in new[]
 		{
@@ -554,7 +552,7 @@ internal static class StudioLocalization
 			string body = english[EnglishPrefix.Length..];
 			bool period = body.EndsWith(".", StringComparison.Ordinal);
 			if (period) body = body[..^1];
-			string localizedBody = translations.GetValueOrDefault(body, body);
+			string localizedBody = TryGetTranslation(translations, language, body, out string localized) ? localized : body;
 			return LocalizedPrefix + localizedBody + (period ? "." : string.Empty);
 		}
 		int prefixLength = 0;
@@ -563,21 +561,84 @@ internal static class StudioLocalization
 		{
 			while (prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength])) prefixLength++;
 			string action = english[prefixLength..];
-			if (translations.TryGetValue(action, out translated)) return english[..prefixLength] + translated;
+			if (TryGetTranslation(translations, language, action, out translated)) return english[..prefixLength] + translated;
 		}
 		const string requiredSuffix = "  * Required";
 		if (english.EndsWith(requiredSuffix, StringComparison.Ordinal))
 		{
 			string field = english[..^requiredSuffix.Length];
-			return translations.GetValueOrDefault(field, field) + "  * " + requiredWord;
+			return (TryGetTranslation(translations, language, field, out string localized) ? localized : field) + "  * " + requiredWord;
 		}
 		const string requiredMarker = " *";
 		if (english.EndsWith(requiredMarker, StringComparison.Ordinal))
 		{
 			string field = english[..^requiredMarker.Length];
-			return translations.GetValueOrDefault(field, field) + requiredMarker;
+			return (TryGetTranslation(translations, language, field, out string localized) ? localized : field) + requiredMarker;
+		}
+		const string returnSuffix = ". The Studio will return you to the correct page.";
+		if (english.EndsWith(returnSuffix, StringComparison.Ordinal))
+		{
+			string message = english[..^returnSuffix.Length];
+			if (TryGetTranslation(translations, language, message, out string localizedMessage)
+				&& TryGetTranslation(translations, language, returnSuffix[2..], out string localizedSuffix))
+				return localizedMessage + ". " + localizedSuffix;
 		}
 		return english;
+	}
+
+	public static bool HasCompleteTranslation(string english, string language)
+	{
+		IReadOnlyDictionary<string, string>? translations = GetTranslations(language);
+		if (translations is null) return language.Equals("en-US", StringComparison.OrdinalIgnoreCase);
+		if (TryGetTranslation(translations, language, english, out _)) return true;
+		foreach (string prefix in new[] { "Required. ", "Optional. " })
+		{
+			if (!english.StartsWith(prefix, StringComparison.Ordinal)) continue;
+			string body = english[prefix.Length..].TrimEnd('.');
+			return TryGetTranslation(translations, language, body, out _);
+		}
+		int prefixLength = 0;
+		while (prefixLength < english.Length && char.IsDigit(english[prefixLength])) prefixLength++;
+		if (prefixLength > 0 && prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength]))
+		{
+			while (prefixLength < english.Length && char.IsWhiteSpace(english[prefixLength])) prefixLength++;
+			return TryGetTranslation(translations, language, english[prefixLength..], out _);
+		}
+		const string requiredSuffix = "  * Required";
+		if (english.EndsWith(requiredSuffix, StringComparison.Ordinal))
+			return TryGetTranslation(translations, language, english[..^requiredSuffix.Length], out _);
+		const string requiredMarker = " *";
+		if (english.EndsWith(requiredMarker, StringComparison.Ordinal))
+			return TryGetTranslation(translations, language, english[..^requiredMarker.Length], out _);
+		const string returnSuffix = ". The Studio will return you to the correct page.";
+		if (english.EndsWith(returnSuffix, StringComparison.Ordinal))
+			return TryGetTranslation(translations, language, english[..^returnSuffix.Length], out _)
+				&& TryGetTranslation(translations, language, returnSuffix[2..], out _);
+		return false;
+	}
+
+	private static IReadOnlyDictionary<string, string>? GetTranslations(string language) =>
+		language.Equals("es-ES", StringComparison.OrdinalIgnoreCase) ? Spanish : StudioAdditionalTranslations.Get(language);
+
+	private static bool TryGetTranslation(
+		IReadOnlyDictionary<string, string> translations,
+		string language,
+		string english,
+		out string translated)
+	{
+		IReadOnlyDictionary<string, string>? runtime = StudioRuntimeTranslations.Get(language);
+		if (runtime is not null && runtime.TryGetValue(english, out string? runtimeValue) && runtimeValue is not null)
+		{
+			translated = runtimeValue;
+			return true;
+		}
+		if (translations.TryGetValue(english, out string? resourceValue) && resourceValue is not null)
+		{
+			translated = resourceValue;
+			return true;
+		}
+		translated = english;
+		return false;
 	}
 }
 

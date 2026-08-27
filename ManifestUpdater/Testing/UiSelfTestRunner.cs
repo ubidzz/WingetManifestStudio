@@ -43,6 +43,9 @@ internal static class UiSelfTestRunner
 				form.SetLanguageForVerification("es-ES");
 				form.RenderTabForVerification("Installers & Hashes", Path.Combine(AppContext.BaseDirectory, "ui-installers-es.png"));
 				form.RenderTabForVerification("Preview & Submit", Path.Combine(AppContext.BaseDirectory, "ui-review-es.png"));
+				form.SetLanguageForVerification("ja-JP");
+				form.RenderTabForVerification("Start Here", Path.Combine(AppContext.BaseDirectory, "ui-start-ja.png"));
+				form.RenderTabForVerification("Package Details", Path.Combine(AppContext.BaseDirectory, "ui-package-ja.png"));
 				exitCode = report.Any(line => line.StartsWith("FAIL", StringComparison.Ordinal)) ? 1 : 0;
 			}
 			catch (Exception ex)

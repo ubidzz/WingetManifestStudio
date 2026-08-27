@@ -358,12 +358,17 @@ internal static class StudioAdditionalTranslations
 		("Test in the numbered order, then submit", "番号順にテストして送信"), ("Need help?", "ヘルプが必要ですか？"),
 		("Open Help & Guide", "ヘルプとガイドを開く"), ("Open application updates", "アプリの更新を開く"));
 
+	private static readonly IReadOnlyDictionary<string, string> CompleteFrench = Merge(French, StudioFrenchFullTranslations.Values);
+	private static readonly IReadOnlyDictionary<string, string> CompleteGerman = Merge(German, StudioGermanFullTranslations.Values);
+	private static readonly IReadOnlyDictionary<string, string> CompletePortuguese = Merge(Portuguese, StudioPortugueseFullTranslations.Values);
+	private static readonly IReadOnlyDictionary<string, string> CompleteJapanese = Merge(Japanese, StudioJapaneseFullTranslations.Values);
+
 	public static IReadOnlyDictionary<string, string>? Get(string language) => language.ToLowerInvariant() switch
 	{
-		"fr-fr" => French,
-		"de-de" => German,
-		"pt-br" => Portuguese,
-		"ja-jp" => Japanese,
+		"fr-fr" => CompleteFrench,
+		"de-de" => CompleteGerman,
+		"pt-br" => CompletePortuguese,
+		"ja-jp" => CompleteJapanese,
 		_ => null
 	};
 
@@ -379,4 +384,14 @@ internal static class StudioAdditionalTranslations
 
 	private static IReadOnlyDictionary<string, string> Create(params (string English, string Translation)[] entries) =>
 		entries.ToDictionary(entry => entry.English, entry => entry.Translation, StringComparer.Ordinal);
+
+	private static IReadOnlyDictionary<string, string> Merge(
+		IReadOnlyDictionary<string, string> core,
+		IReadOnlyDictionary<string, string> supplemental)
+	{
+		Dictionary<string, string> complete = new(core, StringComparer.Ordinal);
+		foreach ((string english, string translated) in supplemental)
+			complete[english] = translated;
+		return complete;
+	}
 }

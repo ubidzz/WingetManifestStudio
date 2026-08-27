@@ -199,7 +199,7 @@ Portable EXEs cannot always be distinguished safely from normal EXE installers, 
 
 ## Interface Languages
 
-The Start and Help pages both provide a visible interface-language setting for English, Spanish, French, German, Brazilian Portuguese, and Japanese. Navigation, guided actions, Review, Test Center, primary field labels, and beginner instructions are translated. Less-common diagnostic messages safely fall back to English, while manifest data, package metadata, YAML, installer output, and official Winget output are never translated or modified. The choice is stored in the current Windows user's local application settings and is not written into package profiles.
+The Start and Help pages both provide a visible interface-language setting for English, Spanish, French, German, Brazilian Portuguese, and Japanese. All normal Studio-owned interface text is translated, including navigation, buttons, field labels, placeholders, beginner explanations, Review, Test Center, update guidance, and the full Help walkthrough. Package data, manifest metadata, YAML, file paths, installer output, and exact Winget or WingetCreate command output are intentionally never translated or modified. The choice is stored in the current Windows user's local application settings and is not written into package profiles.
 
 ## Build from Source
 
