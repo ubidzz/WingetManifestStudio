@@ -35,16 +35,20 @@ public partial class MainForm : Form
 	private StudioTextBox toolArgumentsBox = null!;
 	private StudioCheckBox insecureUrlCheck = null!;
 	private Label readinessLabel = null!;
-	private Button previewButton = null!;
-	private Button saveButton = null!;
-	private Button validateButton = null!;
-	private Button testCenterButton = null!;
-	private Button safePreflightButton = null!;
-	private Button enableLocalTestingButton = null!;
-	private Button testInstallHereButton = null!;
-	private Button verifyInstalledResultButton = null!;
-	private Button testSubmitButton = null!;
-	private Button submitButton = null!;
+	private Button reviewNextActionButton = null!;
+	private Label reviewActionTitleLabel = null!;
+	private Label reviewActionDescriptionLabel = null!;
+	private Label reviewActionSafetyLabel = null!;
+	private StudioTestProgressStep[] reviewProgressSteps = [];
+	private StudioStatusPill[] reviewStatusPills = [];
+	private Button nextTestActionButton = null!;
+	private Label nextTestActionTitleLabel = null!;
+	private Label nextTestActionDescriptionLabel = null!;
+	private Label nextTestActionSafetyLabel = null!;
+	private StudioTestProgressStep[] testProgressSteps = [];
+	private StudioStatusPill[] testStatusPills = [];
+	private Control testOptionalToolsCard = null!;
+	private Button optionalToolsToggleButton = null!;
 	private Button previewModeButton = null!;
 	private Button toolRunButton = null!;
 	private readonly ErrorProvider fieldErrors = new() { BlinkStyle = ErrorBlinkStyle.NeverBlink };
@@ -504,6 +508,7 @@ public partial class MainForm : Form
 		root.Controls.Add(CreateInfoStrip("FOLLOW THESE INSTALLER STEPS", "1 Add the exact local release file. 2 Paste its direct public HTTPS download URL into that row. 3 Select the row and inspect it. 4 Verify Public URLs after uploading the release. Hash, type, architecture, and supported MSI identity values are filled automatically."), 0, 0);
 		root.Controls.Add(CreateToolbar(
 			("1 Add Release Files", async (_, _) => await AddInstallerFilesAsync()),
+			("2 Enter Public URL", (_, _) => FocusInstallerUrlCell()),
 			("3 Inspect & Fill Selected", async (_, _) => await InspectSelectedAsync()),
 			("4 Verify Public URLs", async (_, _) => await VerifyPublicUrlsAsync())), 0, 1);
 		root.Controls.Add(CreateToolbar(
@@ -523,37 +528,73 @@ public partial class MainForm : Form
 	{
 		TabPage page = NewPage("Preview & Submit");
 		TableLayoutPanel root = NewRoot();
-		root.RowCount = 5;
+		root.RowCount = 3;
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+		root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
 		root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-		root.Controls.Add(CreateInfoStrip("WHAT DO I DO NEXT?", "Follow the highlighted next step. The Studio will say NOTHING NEEDS FIXING when the required information is ready, or list exactly what must be corrected and where to find it."), 0, 0);
-		root.Controls.Add(CreateReadinessPanel(), 0, 1);
-		TableLayoutPanel actions = (TableLayoutPanel)CreateToolbar(
-			("1 Preview Changes", (_, _) => GeneratePreview()),
-			("2 Save Manifests", (_, _) => SaveManifests()),
-			("3 Validate Locally", async (_, _) => await ValidateWithWingetAsync()),
-			("4 Open Test Center", (_, _) => SelectTab("Test Center")),
-			("5 Submit to Winget", async (_, _) => await SubmitAsync()));
-		previewButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("1 ", StringComparison.Ordinal));
-		saveButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("2 ", StringComparison.Ordinal));
-		validateButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("3 ", StringComparison.Ordinal));
-		testCenterButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("4 ", StringComparison.Ordinal));
-		submitButton = actions.Controls.OfType<Button>().First(button => button.Text.StartsWith("5 ", StringComparison.Ordinal));
-		root.Controls.Add(actions, 0, 2);
-		TableLayoutPanel supportingActions = (TableLayoutPanel)CreateToolbar(
-			("Open Output Folder", (_, _) => OpenOutputFolder()),
-			("Technical Details", (_, _) => TogglePreviewMode()));
-		previewModeButton = supportingActions.Controls.OfType<Button>().First(button => button.Text == "Technical Details");
-		previewModeButton.Enabled = false;
-		root.Controls.Add(supportingActions, 0, 3);
-		previewBox = NewRichTextBox();
-		previewBox.ReadOnly = true;
-		previewBox.Font = new Font("Cascadia Mono", 9.5F);
-		previewBox.Text = "WHAT NEEDS ATTENTION\r\n\r\nComplete the Package and Installers pages. This page will then tell you the next step.";
-		root.Controls.Add(previewBox, 0, 4);
+		root.Controls.Add(CreateInfoStrip("REVIEW AND SAVE SAFELY", "Use the single highlighted action below. Review never changes files until you choose Save, and existing manifests are backed up before replacement."), 0, 0);
+		root.Controls.Add(CreateReviewProgressPanel(), 0, 1);
+
+		TableLayoutPanel body = new()
+		{
+			AccessibleName = "Review guided workspace",
+			Dock = DockStyle.Fill,
+			ColumnCount = 2,
+			RowCount = 1,
+			BackColor = PageColor,
+			Padding = new Padding(0, 2, 0, 0),
+			Margin = Padding.Empty
+		};
+		body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64));
+		body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
+
+		TableLayoutPanel work = new()
+		{
+			AccessibleName = "Current review action and plain-language results",
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = PageColor,
+			Padding = new Padding(0, 0, 8, 0),
+			Margin = Padding.Empty
+		};
+		work.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+		work.RowStyles.Add(new RowStyle(SizeType.Absolute, 176));
+		work.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		work.Controls.Add(CreateCurrentReviewActionPanel(), 0, 0);
+		work.Controls.Add(CreateReviewResultsPanel(), 0, 1);
+
+		FlowLayoutPanel sidebar = new()
+		{
+			AccessibleName = "Review checklist and view options",
+			Dock = DockStyle.Fill,
+			AutoScroll = true,
+			FlowDirection = FlowDirection.TopDown,
+			WrapContents = false,
+			BackColor = PageColor,
+			Padding = new Padding(8, 0, 0, 0),
+			Margin = Padding.Empty
+		};
+		Control checklist = CreateReviewChecklistPanel();
+		Control options = CreateReviewViewOptionsPanel();
+		sidebar.Controls.Add(checklist);
+		sidebar.Controls.Add(options);
+		bool sizingSidebar = false;
+		sidebar.ClientSizeChanged += (_, _) =>
+		{
+			if (sizingSidebar || sidebar.IsDisposed) return;
+			sizingSidebar = true;
+			try
+			{
+				int width = Math.Max(320, sidebar.ClientSize.Width - sidebar.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 3);
+				foreach (Control control in sidebar.Controls) control.Width = width;
+			}
+			finally { sizingSidebar = false; }
+		};
+
+		body.Controls.Add(work, 0, 0);
+		body.Controls.Add(sidebar, 1, 0);
+		root.Controls.Add(body, 0, 2);
 		page.Controls.Add(root);
 		return page;
 	}
@@ -610,75 +651,79 @@ public partial class MainForm : Form
 	{
 		TabPage page = NewPage("Test Center");
 		TableLayoutPanel root = NewRoot();
-		root.RowCount = 2;
+		root.RowCount = 3;
 		root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+		root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
 		root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-		root.Controls.Add(CreateInfoStrip("TEST AND FINISH", "Work down the four required steps on the left. The highlighted button is the next action. Results and optional diagnostic tools stay on the right. When all four steps pass, submit here without returning to Review."), 0, 0);
+		root.Controls.Add(CreateInfoStrip("TEST AND FINISH", "Follow the progress line, then use the single highlighted action below. The Studio unlocks each test in the correct order and enables submission when all four pass."), 0, 0);
+		root.Controls.Add(CreateTestProgressPanel(), 0, 1);
 
 		TableLayoutPanel body = new()
 		{
-			AccessibleName = "Test Center split workspace",
+			AccessibleName = "Test Center guided workspace",
 			Dock = DockStyle.Fill,
 			ColumnCount = 2,
 			RowCount = 1,
 			BackColor = PageColor,
-			Padding = new Padding(0, 4, 0, 0),
+			Padding = new Padding(0, 2, 0, 0),
 			Margin = Padding.Empty
 		};
-		body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
-		body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+		body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64));
+		body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
 
-		FlowLayoutPanel steps = new()
+		TableLayoutPanel work = new()
 		{
-			AccessibleName = "Required test steps",
+			AccessibleName = "Current test action and results",
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = PageColor,
+			Padding = new Padding(0, 0, 8, 0),
+			Margin = Padding.Empty
+		};
+		work.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+		work.RowStyles.Add(new RowStyle(SizeType.Absolute, 176));
+		work.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		work.Controls.Add(CreateCurrentTestActionPanel(), 0, 0);
+		work.Controls.Add(CreateTestResultsPanel(), 0, 1);
+
+		FlowLayoutPanel sidebar = new()
+		{
+			AccessibleName = "Test checklist and optional tools",
 			Dock = DockStyle.Fill,
 			AutoScroll = true,
 			FlowDirection = FlowDirection.TopDown,
 			WrapContents = false,
 			BackColor = PageColor,
-			Padding = new Padding(0, 0, 10, 10),
+			Padding = new Padding(8, 0, 0, 0),
 			Margin = Padding.Empty
 		};
-		bool resizingSteps = false;
-		steps.ClientSizeChanged += (_, _) =>
+		Control checklist = CreateTestChecklistPanel();
+		optionalToolsToggleButton = CreateButton("Show optional tools", (_, _) => ToggleOptionalTestTools());
+		optionalToolsToggleButton.AccessibleName = "Show optional Test Center tools";
+		optionalToolsToggleButton.AutoSize = false;
+		optionalToolsToggleButton.Height = 42;
+		testOptionalToolsCard = CreateOptionalTestToolsCard();
+		testOptionalToolsCard.Visible = false;
+		sidebar.Controls.Add(checklist);
+		sidebar.Controls.Add(optionalToolsToggleButton);
+		sidebar.Controls.Add(testOptionalToolsCard);
+		bool sizingSidebar = false;
+		sidebar.ClientSizeChanged += (_, _) =>
 		{
-			if (resizingSteps || steps.IsDisposed) return;
-			resizingSteps = true;
+			if (sizingSidebar || sidebar.IsDisposed) return;
+			sizingSidebar = true;
 			try
 			{
-				int width = Math.Max(510, steps.ClientSize.Width - steps.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 4);
-				foreach (Control control in steps.Controls) control.Width = width;
+				int width = Math.Max(320, sidebar.ClientSize.Width - sidebar.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 3);
+				foreach (Control control in sidebar.Controls) control.Width = width;
 			}
-			finally { resizingSteps = false; }
+			finally { sizingSidebar = false; }
 		};
-		steps.Controls.Add(CreateTestPlanPanel());
-		steps.Controls.Add(CreateTestStepCard("1", "Safe preflight", "Checks YAML, hashes, signatures, and the existing Winget package. It does not install anything.", "Run safe preflight", async (_, _) => await RunSafePreflightAsync(), out safePreflightButton));
-		steps.Controls.Add(CreateTestStepCard("2", "Allow local manifest testing", "One Windows administrator approval. This setting normally only needs to be enabled once.", "Enable local testing", async (_, _) => await EnableLocalManifestTestingAsync(), out enableLocalTestingButton));
-		steps.Controls.Add(CreateTestStepCard("3", "Install this release", "Runs the exact generated manifest through Winget. Review the separate installer console, then close it.", "Test install here", async (_, _) => await TestInstallHereAsync(), out testInstallHereButton));
-		steps.Controls.Add(CreateTestStepCard("4", "Confirm the installed result", "Checks the Winget ID first, then the exact MSI identity or installed application name when needed.", "Verify installation", async (_, _) => await VerifyInstalledResultAsync(), out verifyInstalledResultButton));
-		steps.Controls.Add(CreateTestStepCard("✓", "Finish and submit", "After all four required checks pass, start Microsoft's official WingetCreate submission here.", "Submit to Winget", async (_, _) => await SubmitAsync(), out testSubmitButton));
 
-		TableLayoutPanel details = new()
-		{
-			AccessibleName = "Test results and optional tools",
-			Dock = DockStyle.Fill,
-			ColumnCount = 1,
-			RowCount = 3,
-			BackColor = PageColor,
-			Padding = new Padding(10, 0, 0, 0),
-			Margin = Padding.Empty
-		};
-		details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-		details.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-		details.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-		details.RowStyles.Add(new RowStyle(SizeType.Absolute, 174));
-		details.Controls.Add(CreateTestResultsPanel(), 0, 0);
-		details.Controls.Add(CreateInfoStrip("OPTIONAL TOOLS", "Use these only when you need more detail. They are not extra required steps."), 0, 1);
-		details.Controls.Add(CreateTestToolsPanel(), 0, 2);
-
-		body.Controls.Add(steps, 0, 0);
-		body.Controls.Add(details, 1, 0);
-		root.Controls.Add(body, 0, 1);
+		body.Controls.Add(work, 0, 0);
+		body.Controls.Add(sidebar, 1, 0);
+		root.Controls.Add(body, 0, 2);
 		page.Controls.Add(root);
 		UpdateTestPlanStatus();
 		return page;
@@ -898,6 +943,20 @@ public partial class MainForm : Form
 		installerGrid.BeginEdit(true);
 	}
 
+	private void FocusInstallerUrlCell()
+	{
+		if (installerGrid.Rows.Count == 0)
+		{
+			SetStatus("Complete step 1 first: add the exact local release file, then enter its public download URL.");
+			return;
+		}
+		int rowIndex = installerGrid.CurrentRow?.Index ?? 0;
+		installerGrid.CurrentCell = installerGrid.Rows[rowIndex].Cells[nameof(InstallerArtifact.InstallerUrl)];
+		installerGrid.Focus();
+		installerGrid.BeginEdit(true);
+		SetStatus("Step 2: paste the direct public HTTPS download URL for this exact release file.");
+	}
+
 	private async Task AttachFileToSelectedAsync()
 	{
 		if (isBusy) return;
@@ -1111,7 +1170,7 @@ public partial class MainForm : Form
 			ReadProjectFromControls();
 			ManifestGenerationResult result = ManifestService.Generate(project);
 			simplePreviewText = BuildSimpleReview(result, ReviewProgress.Previewed);
-			StringBuilder preview = new("TECHNICAL YAML PREVIEW — ADVANCED\r\nThe simple review is available with the Show Simple Review button.\r\n");
+			StringBuilder preview = new("TECHNICAL YAML PREVIEW — ADVANCED\r\nReturn to the beginner-friendly summary with Show Plain-Language Review.\r\n");
 			foreach ((string name, string content) in result.Files)
 			{
 				preview.AppendLine().AppendLine(new string('═', 90)).AppendLine(name).AppendLine(new string('─', 90)).AppendLine(content);
@@ -1169,7 +1228,7 @@ public partial class MainForm : Form
 			summary.AppendLine("Click Validate Locally. Winget will check the manifests without installing the package.");
 		else
 			summary.AppendLine("If the package ID, version, release file, and public URL above are correct, click Save Manifests. Any file being replaced will be backed up first.");
-		summary.AppendLine().Append("Technical YAML is hidden. Use Technical Details only when you want to inspect it.");
+		summary.AppendLine().Append("Technical YAML is hidden. Use Show Technical YAML only when you want to inspect it.");
 		return summary.ToString();
 	}
 
@@ -1220,7 +1279,7 @@ public partial class MainForm : Form
 
 		StringBuilder message = new("WINGET FOUND A PROBLEM — DO NOT SUBMIT YET\r\n\r\nWHAT NEEDS ATTENTION\r\n");
 		if (fields.Count == 0)
-			message.AppendLine("Winget did not identify one simple field name. Open Technical Details and read the first Manifest Error.");
+			message.AppendLine("Winget did not identify one simple field name. Choose Show Technical YAML and read the first Manifest Error.");
 		else
 		{
 			int number = 1;
@@ -1228,7 +1287,7 @@ public partial class MainForm : Form
 		}
 		message.AppendLine().AppendLine("NEXT STEP");
 		message.AppendLine("Correct the listed field on 2 Package or 3 Installers, then repeat Preview Changes → Save Manifests → Validate Locally.");
-		message.AppendLine().Append("The complete Winget error is available under Technical Details.");
+		message.AppendLine().Append("The complete Winget error is available under Show Technical YAML.");
 		return message.ToString();
 	}
 
@@ -1264,7 +1323,7 @@ public partial class MainForm : Form
 		{
 			showingTechnicalPreview = true;
 			previewBox.Text = technicalPreviewText;
-			previewModeButton.Text = "Simple Review";
+			previewModeButton.Text = "Show plain-language review";
 			previewModeButton.AccessibleName = previewModeButton.Text;
 		}
 	}
@@ -1273,7 +1332,7 @@ public partial class MainForm : Form
 	{
 		showingTechnicalPreview = false;
 		previewBox.Text = simplePreviewText;
-		previewModeButton.Text = "Technical Details";
+		previewModeButton.Text = "Show technical YAML";
 		previewModeButton.AccessibleName = previewModeButton.Text;
 	}
 
@@ -1633,70 +1692,121 @@ public partial class MainForm : Form
 		bool localTestingEnabled = localManifestFilesEnabled;
 		bool installPassed = string.Equals(successfulLocalInstallFingerprint, fingerprint, StringComparison.Ordinal);
 		bool installedVerified = string.Equals(verifiedInstalledFingerprint, fingerprint, StringComparison.Ordinal);
-		string wingetState = wingetHealth is null ? "NOT CHECKED" : wingetHealth.IsReady ? $"READY ({wingetHealth.Version})" : "NOT READY";
-		string next = !projectReady
-			? $"Return to Package or Installers: {SimplifyReadinessError(errors[0])}."
-			: wingetHealth is { IsReady: false }
-				? "Use Check Winget setup on the right and follow its repair instructions."
-				: !preflightReady
-					? "Run Safe preflight. It does not install anything."
-					: !localTestingEnabled
-						? "Enable local testing and approve the one Windows prompt."
-						: !installPassed
-							? "Run Test install here and complete its installer console."
-							: !installedVerified
-								? "Verify installation. The Studio checks Winget and the installer identity."
-								: "All four tests passed. Submit to Winget below without leaving this page.";
-
-		testPlanLabel.Text =
-			$"Project: {(projectReady ? "Ready" : $"Needs {errors.Count} fix(es)")}     •     Winget: {wingetState}\r\n"
-			+ $"1  Preflight: {(preflightReady ? "Passed" : "Not run")}        2  Local testing: {(localTestingEnabled ? "Enabled" : "Not enabled")}\r\n"
-			+ $"3  Test install: {(installPassed ? "Passed" : "Not run")}        4  Installed result: {(installedVerified ? "Verified" : "Not verified")}\r\n"
-			+ "Next: " + next;
-		testPlanLabel.ForeColor = projectReady && wingetHealth is not { IsReady: false } ? Color.FromArgb(221, 233, 249) : StudioPalette.Warning;
-
 		bool wingetReady = wingetHealth is not { IsReady: false };
-		bool allRequiredTestsPassed = projectReady && preflightReady && localTestingEnabled && installPassed && installedVerified;
-		Button? nextButton = !projectReady || !wingetReady ? null
-			: !preflightReady ? safePreflightButton
-			: !localTestingEnabled ? enableLocalTestingButton
-			: !installPassed ? testInstallHereButton
-			: !installedVerified ? verifyInstalledResultButton
-			: testSubmitButton;
+		string wingetState = wingetHealth is null ? "WINGET NOT CHECKED" : wingetHealth.IsReady ? $"WINGET READY{(wingetHealth.Version.Length > 0 ? " · " + wingetHealth.Version : string.Empty)}" : "WINGET NEEDS ATTENTION";
+		testPlanLabel.Text = $"{(projectReady ? "PROJECT READY" : $"PROJECT NEEDS {errors.Count} FIX{(errors.Count == 1 ? string.Empty : "ES")}")}   •   {wingetState}";
+		testPlanLabel.ForeColor = projectReady && wingetReady ? AccentColor : StudioPalette.Warning;
 
-		if (safePreflightButton is not null)
+		bool[] complete = [preflightReady, localTestingEnabled, installPassed, installedVerified];
+		string[] completeText = ["PASSED", "ENABLED", "INSTALLED", "VERIFIED"];
+		int currentStep = !preflightReady ? 0 : !localTestingEnabled ? 1 : !installPassed ? 2 : !installedVerified ? 3 : 4;
+		for (int index = 0; index < testProgressSteps.Length; index++)
 		{
-			safePreflightButton.Text = preflightReady ? "Preflight passed  ✓" : "Run safe preflight";
-			safePreflightButton.AccessibleName = safePreflightButton.Text;
-			safePreflightButton.Enabled = !isBusy && projectReady;
+			StudioStepState state = complete[index]
+				? StudioStepState.Complete
+				: index == currentStep
+					? (!projectReady || !wingetReady ? StudioStepState.Problem : StudioStepState.Current)
+					: StudioStepState.Pending;
+			testProgressSteps[index].State = state;
+			testProgressSteps[index].StatusText = complete[index] ? completeText[index] : index == currentStep ? state == StudioStepState.Problem ? "NEEDS ATTENTION" : "NEXT" : "WAITING";
+			testProgressSteps[index].AccessibleDescription = testProgressSteps[index].StatusText;
+			if (index < testStatusPills.Length)
+			{
+				testStatusPills[index].State = state;
+				testStatusPills[index].Text = complete[index] ? completeText[index] : index == currentStep ? state == StudioStepState.Problem ? "FIX FIRST" : "NEXT" : "WAITING";
+				testStatusPills[index].AccessibleName = $"Step {index + 1} status: {testStatusPills[index].Text}";
+			}
 		}
-		if (enableLocalTestingButton is not null)
+
+		if (!projectReady)
 		{
-			enableLocalTestingButton.Text = localTestingEnabled ? "Local testing enabled  ✓" : "Enable local testing";
-			enableLocalTestingButton.AccessibleName = enableLocalTestingButton.Text;
-			enableLocalTestingButton.Enabled = !isBusy && projectReady && preflightReady;
+			nextTestActionTitleLabel.Text = "Fix the package information";
+			nextTestActionDescriptionLabel.Text = SimplifyReadinessError(errors[0]) + ". The Studio will return you to the correct page.";
+			nextTestActionSafetyLabel.Text = "REQUIRED · Testing stays locked until this is corrected";
+			nextTestActionSafetyLabel.ForeColor = StudioPalette.Warning;
+			nextTestActionButton.Text = "Open the field to fix";
+			nextTestActionButton.Tag = "fix-project";
 		}
-		if (testInstallHereButton is not null)
+		else if (!wingetReady)
 		{
-			testInstallHereButton.Text = installPassed ? "Test install passed  ✓" : "Test install here";
-			testInstallHereButton.AccessibleName = testInstallHereButton.Text;
-			testInstallHereButton.Enabled = !isBusy && projectReady && preflightReady && localTestingEnabled;
+			nextTestActionTitleLabel.Text = "Repair the Winget test setup";
+			nextTestActionDescriptionLabel.Text = "Windows Package Manager is not ready. Run the setup check to see the exact repair instructions.";
+			nextTestActionSafetyLabel.Text = "SAFE · This only checks Winget and changes nothing";
+			nextTestActionSafetyLabel.ForeColor = StudioPalette.Warning;
+			nextTestActionButton.Text = "Check Winget setup";
+			nextTestActionButton.Tag = "health";
 		}
-		if (verifyInstalledResultButton is not null)
+		else if (!preflightReady)
 		{
-			verifyInstalledResultButton.Text = installedVerified ? "Installation verified  ✓" : "Verify installation";
-			verifyInstalledResultButton.AccessibleName = verifyInstalledResultButton.Text;
-			verifyInstalledResultButton.Enabled = !isBusy && projectReady && installPassed;
+			nextTestActionTitleLabel.Text = "Run safe preflight";
+			nextTestActionDescriptionLabel.Text = "Checks YAML, file hashes, signatures, official Winget validation, and whether this package already exists.";
+			nextTestActionSafetyLabel.Text = "SAFE · Nothing will be installed or changed";
+			nextTestActionSafetyLabel.ForeColor = SuccessColor;
+			nextTestActionButton.Text = "Run safe preflight";
+			nextTestActionButton.Tag = "preflight";
 		}
-		if (testSubmitButton is not null)
+		else if (!localTestingEnabled)
 		{
-			testSubmitButton.Enabled = !isBusy && allRequiredTestsPassed;
-			testSubmitButton.AccessibleName = "Submit to Winget from Test Center";
+			nextTestActionTitleLabel.Text = "Allow local manifest testing";
+			nextTestActionDescriptionLabel.Text = "Windows requires one administrator approval before Winget can install a manifest from this computer.";
+			nextTestActionSafetyLabel.Text = "ONE-TIME SETUP · Approve the Windows prompt";
+			nextTestActionSafetyLabel.ForeColor = StudioPalette.Warning;
+			nextTestActionButton.Text = "Enable local testing";
+			nextTestActionButton.Tag = "local-testing";
 		}
-		foreach (Button button in new Button?[] { safePreflightButton, enableLocalTestingButton, testInstallHereButton, verifyInstalledResultButton, testSubmitButton }.OfType<Button>())
+		else if (!installPassed)
 		{
-			if (button is StudioButton studioButton)
-				studioButton.ButtonKind = ReferenceEquals(button, nextButton) ? StudioButtonKind.Primary : StudioButtonKind.Secondary;
+			nextTestActionTitleLabel.Text = "Test install this release";
+			nextTestActionDescriptionLabel.Text = "Runs winget install --manifest with the exact generated files. Review the installer console, then close it.";
+			nextTestActionSafetyLabel.Text = "CONFIRMATION REQUIRED · This installs software on this PC";
+			nextTestActionSafetyLabel.ForeColor = StudioPalette.Warning;
+			nextTestActionButton.Text = "Test install here";
+			nextTestActionButton.Tag = "install";
+		}
+		else if (!installedVerified)
+		{
+			nextTestActionTitleLabel.Text = "Confirm the installed result";
+			nextTestActionDescriptionLabel.Text = "Checks the Winget package ID, then the MSI identity or installed application name when needed.";
+			nextTestActionSafetyLabel.Text = "SAFE · Verification does not reinstall the package";
+			nextTestActionSafetyLabel.ForeColor = SuccessColor;
+			nextTestActionButton.Text = "Verify installation";
+			nextTestActionButton.Tag = "verify";
+		}
+		else
+		{
+			nextTestActionTitleLabel.Text = "All tests passed — ready to submit";
+			nextTestActionDescriptionLabel.Text = "Start Microsoft's official WingetCreate submission without returning to the Review page.";
+			nextTestActionSafetyLabel.Text = "READY · WingetCreate handles sign-in and pull-request creation";
+			nextTestActionSafetyLabel.ForeColor = SuccessColor;
+			nextTestActionButton.Text = "Submit to Winget";
+			nextTestActionButton.Tag = "submit";
+		}
+
+		nextTestActionButton.Enabled = !isBusy && (projectReady || string.Equals(nextTestActionButton.Tag as string, "fix-project", StringComparison.Ordinal));
+		nextTestActionButton.AccessibleName = nextTestActionButton.Text;
+		if (nextTestActionButton is StudioButton studioButton) studioButton.ButtonKind = StudioButtonKind.Primary;
+		bool currentReview = projectReady && string.Equals(reviewFingerprint, fingerprint, StringComparison.Ordinal);
+		UpdateReviewWorkflowStatus(errors, fingerprint, currentReview);
+	}
+
+	private async Task RunNextTestActionAsync()
+	{
+		switch (nextTestActionButton.Tag as string)
+		{
+			case "fix-project":
+				List<string> errors = ManifestService.Validate(project);
+				string first = errors.FirstOrDefault() ?? string.Empty;
+				SelectTab(first.Contains("installer", StringComparison.OrdinalIgnoreCase)
+					|| first.Contains("hash", StringComparison.OrdinalIgnoreCase)
+					|| first.Contains("architecture", StringComparison.OrdinalIgnoreCase)
+					? "Installers & Hashes" : "Package Details");
+				break;
+			case "health": await RefreshTestEnvironmentAsync(showReport: true); break;
+			case "preflight": await RunSafePreflightAsync(); break;
+			case "local-testing": await EnableLocalManifestTestingAsync(); break;
+			case "install": await TestInstallHereAsync(); break;
+			case "verify": await VerifyInstalledResultAsync(); break;
+			case "submit": await SubmitAsync(); break;
 		}
 	}
 
@@ -2311,122 +2421,553 @@ public partial class MainForm : Form
 		RefreshReadiness();
 	}
 
-	private Control CreateReadinessPanel()
+	private Control CreateReviewProgressPanel()
 	{
 		StudioCard panel = new()
 		{
-			Dock = DockStyle.Top,
-			Height = 118,
-			BackColor = CardColor,
-			Padding = new Padding(16, 12, 16, 12),
-			Margin = new Padding(0, 0, 0, 8),
-			CornerRadius = 10
-		};
-		readinessLabel = new Label
-		{
+			AccessibleName = "Four-step review progress",
 			Dock = DockStyle.Fill,
-			Text = "WHAT NEEDS ATTENTION\r\nComplete Package Details and add an installer to continue.",
-			ForeColor = StudioPalette.Warning,
-			Font = new Font("Segoe UI Semibold", 9.5F),
-			TextAlign = ContentAlignment.MiddleLeft
+			ColumnCount = 4,
+			RowCount = 1,
+			BackColor = CardColor,
+			Padding = new Padding(22, 7, 22, 7),
+			Margin = new Padding(0, 8, 0, 8),
+			CornerRadius = 12
 		};
-		panel.Controls.Add(readinessLabel);
+		for (int column = 0; column < 4; column++) panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+		panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+		string[] titles = ["Preview", "Save safely", "Validate", "Test & submit"];
+		reviewProgressSteps = new StudioTestProgressStep[4];
+		for (int index = 0; index < reviewProgressSteps.Length; index++)
+		{
+			reviewProgressSteps[index] = new StudioTestProgressStep
+			{
+				Dock = DockStyle.Fill,
+				StepNumber = index + 1,
+				Title = titles[index],
+				IsFirst = index == 0,
+				IsLast = index == reviewProgressSteps.Length - 1,
+				Margin = Padding.Empty,
+				AccessibleName = $"Review step {index + 1}: {titles[index]}"
+			};
+			panel.Controls.Add(reviewProgressSteps[index], index, 0);
+		}
 		return panel;
 	}
 
-	private Control CreateTestPlanPanel()
-	{
-		StudioCard panel = new()
-		{
-			Dock = DockStyle.Top,
-			Width = 650,
-			Height = 108,
-			BackColor = CardColor,
-			Padding = new Padding(18, 10, 18, 10),
-			Margin = new Padding(0, 0, 0, 10),
-			CornerRadius = 10
-		};
-		testPlanLabel = new Label
-		{
-			Dock = DockStyle.Fill,
-			ForeColor = Color.FromArgb(221, 233, 249),
-			Font = new Font("Segoe UI Semibold", 9.5F),
-			TextAlign = ContentAlignment.MiddleLeft
-		};
-		panel.Controls.Add(testPlanLabel);
-		return panel;
-	}
-
-	private Control CreateTestStepCard(
-		string number,
-		string title,
-		string description,
-		string buttonText,
-		EventHandler handler,
-		out Button actionButton)
+	private Control CreateCurrentReviewActionPanel()
 	{
 		StudioCard card = new()
 		{
-			Width = 650,
-			Height = 72,
-			ColumnCount = 3,
+			AccessibleName = "Current required review action",
+			Dock = DockStyle.Fill,
+			ColumnCount = 2,
 			RowCount = 1,
 			BackColor = CardColor,
-			Padding = new Padding(8),
-			Margin = new Padding(0, 0, 0, 6),
-			CornerRadius = 10
+			Padding = new Padding(20, 14, 18, 14),
+			Margin = new Padding(0, 0, 0, 10),
+			CornerRadius = 12
 		};
-		card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 44));
 		card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-		card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 184));
-		Label step = new()
-		{
-			Text = number,
-			Dock = DockStyle.Fill,
-			TextAlign = ContentAlignment.MiddleCenter,
-			Font = new Font("Segoe UI Semibold", 14F, FontStyle.Bold),
-			ForeColor = AccentColor,
-			BackColor = InputColor,
-			Margin = new Padding(0, 0, 12, 0)
-		};
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 222));
+
 		TableLayoutPanel copy = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 4,
+			BackColor = CardColor,
+			Margin = Padding.Empty,
+			Padding = new Padding(0, 0, 18, 0)
+		};
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 37));
+		copy.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
+		readinessLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			Text = "PROJECT STATUS",
+			ForeColor = StudioPalette.Warning,
+			Font = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty
+		};
+		reviewActionTitleLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			Text = "Complete the package information",
+			ForeColor = Color.White,
+			Font = new Font("Segoe UI Semibold", 17F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			AutoEllipsis = true,
+			Margin = Padding.Empty
+		};
+		reviewActionDescriptionLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			Text = "The Studio will identify the first required item and take you to the correct page.",
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 9F),
+			TextAlign = ContentAlignment.MiddleLeft,
+			AutoEllipsis = true,
+			Margin = Padding.Empty
+		};
+		reviewActionSafetyLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			Text = "REQUIRED · Review is locked until this is corrected",
+			ForeColor = StudioPalette.Warning,
+			Font = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty
+		};
+		copy.Controls.Add(readinessLabel, 0, 0);
+		copy.Controls.Add(reviewActionTitleLabel, 0, 1);
+		copy.Controls.Add(reviewActionDescriptionLabel, 0, 2);
+		copy.Controls.Add(reviewActionSafetyLabel, 0, 3);
+
+		TableLayoutPanel actionHost = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 3,
+			BackColor = CardColor,
+			Margin = Padding.Empty
+		};
+		actionHost.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		actionHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+		actionHost.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		reviewNextActionButton = CreateButton("Open the field to fix", async (_, _) => await RunNextReviewActionAsync(), true);
+		reviewNextActionButton.AccessibleName = "Run the next required review action";
+		reviewNextActionButton.Dock = DockStyle.Fill;
+		reviewNextActionButton.AutoSize = false;
+		reviewNextActionButton.Margin = Padding.Empty;
+		actionHost.Controls.Add(reviewNextActionButton, 0, 1);
+
+		card.Controls.Add(copy, 0, 0);
+		card.Controls.Add(actionHost, 1, 0);
+		return card;
+	}
+
+	private Control CreateReviewChecklistPanel()
+	{
+		StudioCard card = new()
+		{
+			AccessibleName = "Review checklist",
+			Width = 420,
+			Height = 266,
+			ColumnCount = 1,
+			RowCount = 5,
+			BackColor = CardColor,
+			Padding = new Padding(16, 12, 16, 12),
+			Margin = new Padding(0, 0, 0, 10),
+			CornerRadius = 12
+		};
+		card.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+		for (int row = 1; row < 5; row++) card.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+		TableLayoutPanel heading = new()
 		{
 			Dock = DockStyle.Fill,
 			ColumnCount = 1,
 			RowCount = 2,
 			BackColor = CardColor,
-			Margin = Padding.Empty,
-			Padding = new Padding(0, 0, 10, 0)
+			Margin = Padding.Empty
 		};
-		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+		heading.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		heading.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		heading.Controls.Add(new Label
+		{
+			Text = "REVIEW CHECKLIST",
+			Dock = DockStyle.Fill,
+			ForeColor = AccentColor,
+			Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty
+		}, 0, 0);
+		heading.Controls.Add(new Label
+		{
+			Text = "The Studio unlocks these in the correct order.",
+			Dock = DockStyle.Fill,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 8.2F),
+			TextAlign = ContentAlignment.TopLeft,
+			Margin = Padding.Empty
+		}, 0, 1);
+		card.Controls.Add(heading, 0, 0);
+
+		(string title, string description)[] rows =
+		[
+			("1  Preview", "Builds the proposed YAML in memory"),
+			("2  Save safely", "Creates backups before replacing files"),
+			("3  Validate", "Runs the official Winget validator"),
+			("4  Test & submit", "Continues in the guided Test Center")
+		];
+		reviewStatusPills = new StudioStatusPill[rows.Length];
+		for (int index = 0; index < rows.Length; index++)
+		{
+			Control row = CreateTestChecklistRow(rows[index].title, rows[index].description, out StudioStatusPill pill);
+			reviewStatusPills[index] = pill;
+			card.Controls.Add(row, 0, index + 1);
+		}
+		return card;
+	}
+
+	private Control CreateReviewViewOptionsPanel()
+	{
+		StudioCard card = new()
+		{
+			AccessibleName = "Review view options",
+			Width = 420,
+			Height = 160,
+			ColumnCount = 1,
+			RowCount = 3,
+			BackColor = CardColor,
+			Padding = new Padding(12),
+			Margin = new Padding(0, 0, 0, 8),
+			CornerRadius = 12
+		};
+		card.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+		card.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		card.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		card.Controls.Add(new Label
+		{
+			Text = "VIEW OPTIONS\r\nThe plain-language review stays selected by default.",
+			Dock = DockStyle.Fill,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI Semibold", 8.5F),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = new Padding(4, 0, 4, 4)
+		}, 0, 0);
+		previewModeButton = CreateButton("Show technical YAML", (_, _) => TogglePreviewMode());
+		previewModeButton.Enabled = false;
+		previewModeButton.Dock = DockStyle.Fill;
+		previewModeButton.AutoSize = false;
+		previewModeButton.Margin = new Padding(4);
+		Button outputButton = CreateButton("Open output folder", (_, _) => OpenOutputFolder());
+		outputButton.Dock = DockStyle.Fill;
+		outputButton.AutoSize = false;
+		outputButton.Margin = new Padding(4);
+		card.Controls.Add(previewModeButton, 0, 1);
+		card.Controls.Add(outputButton, 0, 2);
+		return card;
+	}
+
+	private Control CreateReviewResultsPanel()
+	{
+		StudioCard panel = new()
+		{
+			AccessibleName = "Plain-language manifest review",
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = CardColor,
+			Padding = new Padding(16, 12, 16, 16),
+			Margin = Padding.Empty,
+			CornerRadius = 12
+		};
+		panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+		panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		panel.Controls.Add(new Label
+		{
+			Text = "PLAIN-LANGUAGE REVIEW",
+			Dock = DockStyle.Fill,
+			TextAlign = ContentAlignment.MiddleLeft,
+			Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+			ForeColor = AccentColor,
+			Margin = Padding.Empty
+		}, 0, 0);
+		previewBox = NewRichTextBox();
+		previewBox.ReadOnly = true;
+		previewBox.Font = new Font("Cascadia Mono", 9.5F);
+		previewBox.Text = "WHAT NEEDS ATTENTION\r\n\r\nComplete the Package and Installers pages. The first item to fix and your next action will appear above.";
+		panel.Controls.Add(previewBox, 0, 1);
+		return panel;
+	}
+
+	private Control CreateTestProgressPanel()
+	{
+		StudioCard panel = new()
+		{
+			AccessibleName = "Four-step test progress",
+			Dock = DockStyle.Fill,
+			ColumnCount = 4,
+			RowCount = 1,
+			BackColor = CardColor,
+			Padding = new Padding(22, 7, 22, 7),
+			Margin = new Padding(0, 8, 0, 8),
+			CornerRadius = 12
+		};
+		for (int column = 0; column < 4; column++) panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+		panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+		string[] titles = ["Safe preflight", "Allow testing", "Test install", "Verify result"];
+		testProgressSteps = new StudioTestProgressStep[4];
+		for (int index = 0; index < testProgressSteps.Length; index++)
+		{
+			testProgressSteps[index] = new StudioTestProgressStep
+			{
+				Dock = DockStyle.Fill,
+				StepNumber = index + 1,
+				Title = titles[index],
+				IsFirst = index == 0,
+				IsLast = index == testProgressSteps.Length - 1,
+				Margin = Padding.Empty,
+				AccessibleName = $"Test step {index + 1}: {titles[index]}"
+			};
+			panel.Controls.Add(testProgressSteps[index], index, 0);
+		}
+		return panel;
+	}
+
+	private Control CreateCurrentTestActionPanel()
+	{
+		StudioCard card = new()
+		{
+			AccessibleName = "Current required test action",
+			Dock = DockStyle.Fill,
+			ColumnCount = 2,
+			RowCount = 1,
+			BackColor = CardColor,
+			Padding = new Padding(20, 14, 18, 14),
+			Margin = new Padding(0, 0, 0, 10),
+			CornerRadius = 12
+		};
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+		card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 222));
+
+		TableLayoutPanel copy = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 4,
+			BackColor = CardColor,
+			Margin = Padding.Empty,
+			Padding = new Padding(0, 0, 18, 0)
+		};
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 37));
 		copy.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
+		testPlanLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			Text = "PROJECT STATUS",
+			ForeColor = AccentColor,
+			Font = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty
+		};
+		nextTestActionTitleLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			Text = "Run safe preflight",
+			ForeColor = Color.White,
+			Font = new Font("Segoe UI Semibold", 17F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			AutoEllipsis = true,
+			Margin = Padding.Empty
+		};
+		nextTestActionDescriptionLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			Text = "Checks the manifest and installer without installing anything.",
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 9F),
+			TextAlign = ContentAlignment.MiddleLeft,
+			AutoEllipsis = true,
+			Margin = Padding.Empty
+		};
+		nextTestActionSafetyLabel = new Label
+		{
+			Dock = DockStyle.Fill,
+			Text = "SAFE · Nothing will be installed",
+			ForeColor = SuccessColor,
+			Font = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty
+		};
+		copy.Controls.Add(testPlanLabel, 0, 0);
+		copy.Controls.Add(nextTestActionTitleLabel, 0, 1);
+		copy.Controls.Add(nextTestActionDescriptionLabel, 0, 2);
+		copy.Controls.Add(nextTestActionSafetyLabel, 0, 3);
+
+		TableLayoutPanel actionHost = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 3,
+			BackColor = CardColor,
+			Margin = Padding.Empty
+		};
+		actionHost.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		actionHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+		actionHost.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		nextTestActionButton = CreateButton("Run safe preflight", async (_, _) => await RunNextTestActionAsync(), true);
+		nextTestActionButton.AccessibleName = "Run the next required test action";
+		nextTestActionButton.Dock = DockStyle.Fill;
+		nextTestActionButton.AutoSize = false;
+		nextTestActionButton.Margin = Padding.Empty;
+		actionHost.Controls.Add(nextTestActionButton, 0, 1);
+
+		card.Controls.Add(copy, 0, 0);
+		card.Controls.Add(actionHost, 1, 0);
+		return card;
+	}
+
+	private Control CreateTestChecklistPanel()
+	{
+		StudioCard card = new()
+		{
+			AccessibleName = "Required test checklist",
+			Width = 420,
+			Height = 288,
+			ColumnCount = 1,
+			RowCount = 5,
+			BackColor = CardColor,
+			Padding = new Padding(16, 12, 16, 12),
+			Margin = new Padding(0, 0, 0, 10),
+			CornerRadius = 12
+		};
+		card.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+		for (int row = 1; row < 5; row++) card.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+		TableLayoutPanel heading = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = CardColor,
+			Margin = Padding.Empty
+		};
+		heading.Controls.Add(new Label
+		{
+			Text = "REQUIRED CHECKLIST",
+			Dock = DockStyle.Fill,
+			ForeColor = AccentColor,
+			Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = Padding.Empty
+		}, 0, 0);
+		heading.Controls.Add(new Label
+		{
+			Text = "These are completed automatically in order.",
+			Dock = DockStyle.Fill,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI", 8.2F),
+			TextAlign = ContentAlignment.TopLeft,
+			Margin = Padding.Empty
+		}, 0, 1);
+		card.Controls.Add(heading, 0, 0);
+
+		(string title, string description)[] rows =
+		[
+			("1  Safe preflight", "Manifest, hash, signature, and repository checks"),
+			("2  Local testing", "One-time Windows setting"),
+			("3  Test install", "Installs this exact release through Winget"),
+			("4  Installed result", "Confirms the installed version")
+		];
+		testStatusPills = new StudioStatusPill[rows.Length];
+		for (int index = 0; index < rows.Length; index++)
+		{
+			Control row = CreateTestChecklistRow(rows[index].title, rows[index].description, out StudioStatusPill pill);
+			testStatusPills[index] = pill;
+			card.Controls.Add(row, 0, index + 1);
+		}
+		return card;
+	}
+
+	private static Control CreateTestChecklistRow(string title, string description, out StudioStatusPill pill)
+	{
+		TableLayoutPanel row = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 2,
+			RowCount = 1,
+			BackColor = StudioPalette.Card,
+			Padding = new Padding(0, 4, 0, 4),
+			Margin = Padding.Empty
+		};
+		row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+		row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+		row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		TableLayoutPanel copy = new()
+		{
+			Dock = DockStyle.Fill,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = StudioPalette.Card,
+			Margin = Padding.Empty
+		};
+		copy.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+		copy.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
 		copy.Controls.Add(new Label
 		{
 			Text = title,
+			UseMnemonic = false,
 			Dock = DockStyle.Fill,
-			TextAlign = ContentAlignment.MiddleLeft,
-			Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold),
-			ForeColor = Color.White,
+			ForeColor = StudioPalette.PrimaryText,
+			Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+			TextAlign = ContentAlignment.BottomLeft,
 			Margin = Padding.Empty
 		}, 0, 0);
 		copy.Controls.Add(new Label
 		{
 			Text = description,
 			Dock = DockStyle.Fill,
+			ForeColor = StudioPalette.MutedText,
+			Font = new Font("Segoe UI", 7.8F),
 			TextAlign = ContentAlignment.TopLeft,
-			ForeColor = MutedColor,
-			Font = new Font("Segoe UI", 8.1F),
 			AutoEllipsis = true,
 			Margin = Padding.Empty
 		}, 0, 1);
-		actionButton = CreateButton(buttonText, handler);
-		actionButton.Dock = DockStyle.Fill;
-		actionButton.AutoSize = false;
-		actionButton.Margin = new Padding(7, 6, 0, 6);
-		card.Controls.Add(step, 0, 0);
-		card.Controls.Add(copy, 1, 0);
-		card.Controls.Add(actionButton, 2, 0);
+		pill = new StudioStatusPill
+		{
+			Text = "WAITING",
+			Anchor = AnchorStyles.None,
+			Size = new Size(96, 28),
+			Margin = Padding.Empty
+		};
+		row.Controls.Add(copy, 0, 0);
+		row.Controls.Add(pill, 1, 0);
+		return row;
+	}
+
+	private Control CreateOptionalTestToolsCard()
+	{
+		StudioCard card = new()
+		{
+			AccessibleName = "Optional diagnostic tools",
+			Width = 420,
+			Height = 224,
+			ColumnCount = 1,
+			RowCount = 2,
+			BackColor = CardColor,
+			Padding = new Padding(12),
+			Margin = new Padding(0, 0, 0, 8),
+			CornerRadius = 12
+		};
+		card.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+		card.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+		card.Controls.Add(new Label
+		{
+			Text = "OPTIONAL DIAGNOSTICS\r\nExtra detail only — these are not required steps.",
+			Dock = DockStyle.Fill,
+			ForeColor = MutedColor,
+			Font = new Font("Segoe UI Semibold", 8.5F),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Margin = new Padding(4, 0, 4, 4)
+		}, 0, 0);
+		card.Controls.Add(CreateTestToolsPanel(), 0, 1);
 		return card;
+	}
+
+	private void ToggleOptionalTestTools()
+	{
+		if (testOptionalToolsCard is null || testOptionalToolsCard.IsDisposed) return;
+		testOptionalToolsCard.Visible = !testOptionalToolsCard.Visible;
+		optionalToolsToggleButton.Text = testOptionalToolsCard.Visible ? "Hide optional tools" : "Show optional tools";
+		optionalToolsToggleButton.AccessibleName = optionalToolsToggleButton.Text;
 	}
 
 	private Control CreateTestResultsPanel()
@@ -2438,14 +2979,14 @@ public partial class MainForm : Form
 			RowCount = 2,
 			BackColor = CardColor,
 			Padding = new Padding(16, 12, 16, 16),
-			Margin = new Padding(0, 0, 0, 12),
+			Margin = Padding.Empty,
 			CornerRadius = 10
 		};
 		panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
 		panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 		panel.Controls.Add(new Label
 		{
-			Text = "LATEST RESULT",
+			Text = "RESULTS AND INSTRUCTIONS",
 			Dock = DockStyle.Fill,
 			TextAlign = ContentAlignment.MiddleLeft,
 			Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
@@ -2456,7 +2997,7 @@ public partial class MainForm : Form
 		testOutputBox.ReadOnly = true;
 		testOutputBox.DetectUrls = true;
 		testOutputBox.Font = new Font("Cascadia Mono", 9F);
-		testOutputBox.Text = "Start with Safe preflight, then work down the highlighted buttons. The exact result and next action will appear here.";
+		testOutputBox.Text = "Your latest test result appears here. Start with the highlighted action above; the Studio will tell you exactly what to do next.";
 		testOutputBox.LinkClicked += (_, eventArgs) =>
 		{
 			if (!uiTestMode && Uri.TryCreate(eventArgs.LinkText, UriKind.Absolute, out Uri? uri))
@@ -2494,7 +3035,15 @@ public partial class MainForm : Form
 			button.Dock = DockStyle.Fill;
 			button.AutoSize = false;
 			button.Margin = new Padding(4);
-			panel.Controls.Add(button, index % 2, index / 2);
+			if (index == actions.Length - 1 && actions.Length % 2 == 1)
+			{
+				panel.Controls.Add(button, 0, index / 2);
+				panel.SetColumnSpan(button, 2);
+			}
+			else
+			{
+				panel.Controls.Add(button, index % 2, index / 2);
+			}
 		}
 		return panel;
 	}
@@ -2558,37 +3107,11 @@ public partial class MainForm : Form
 				}
 				showingTechnicalPreview = false;
 				previewBox.Text = simplePreviewText;
-				previewModeButton.Text = "Technical Details";
+				previewModeButton.Text = "Show technical YAML";
 				previewModeButton.AccessibleName = previewModeButton.Text;
 			}
-
-			readinessLabel.ForeColor = ready ? StudioPalette.Success : StudioPalette.Warning;
-			if (errors.Count > 0)
-			{
-				string first = SimplifyReadinessError(errors[0]);
-				string second = errors.Count > 1 ? "\r\n2. " + SimplifyReadinessError(errors[1]) : string.Empty;
-				string more = errors.Count > 2 ? $"  (+{errors.Count - 2} more shown below)" : string.Empty;
-				readinessLabel.Text = $"FIX {errors.Count} ITEM(S) BEFORE CONTINUING\r\n1. {first}{second}{more}\r\nNEXT: Open 2 Package or 3 Installers and correct the listed fields.";
-			}
-			else if (reviewProgress == ReviewProgress.Previewed)
-				readinessLabel.Text = "PREVIEW READY — NOTHING HAS BEEN SAVED\r\nNothing needs fixing in the required fields. Confirm the summary below.\r\nNEXT: Click Save Manifests.";
-			else if (reviewProgress == ReviewProgress.Saved)
-				readinessLabel.Text = "SAVED SAFELY\r\nAny replaced manifest was backed up first.\r\nNEXT: Click Validate Locally.";
-			else if (reviewProgress == ReviewProgress.ValidationFailed)
-				readinessLabel.Text = "WINGET FOUND A PROBLEM\r\nThe simple explanation is shown below; submission remains locked.\r\nNEXT: Fix the named field, preview, save, and validate again.";
-			else if (reviewProgress == ReviewProgress.Validated && string.Equals(successfulPreflightFingerprint, reviewFingerprint, StringComparison.Ordinal))
-				readinessLabel.Text = "SAFE PREFLIGHT PASSED — READY TO SUBMIT\r\nThe current project passed validation, hashes, signatures, and repository checks.\r\nNEXT: Click Submit to Winget.";
-			else if (reviewProgress == ReviewProgress.Validated)
-				readinessLabel.Text = "VALIDATION PASSED — NOTHING NEEDS FIXING\r\nMicrosoft's Winget validator accepted these manifests.\r\nNEXT: Click Open Test Center and run Safe Preflight.";
-			else
-				readinessLabel.Text = $"READY — NOTHING NEEDS FIXING\r\n{project.PackageIdentifier}  •  version {project.PackageVersion}  •  {project.Installers.Count} installer(s)\r\nNEXT: Click Preview Changes. This does not save files.";
 			bool currentReview = ready && string.Equals(reviewFingerprint, currentFingerprint, StringComparison.Ordinal);
-			bool preflightCurrent = currentReview && string.Equals(successfulPreflightFingerprint, currentFingerprint, StringComparison.Ordinal);
-			previewButton.Enabled = ready && reviewProgress == ReviewProgress.Editing && !isBusy;
-			saveButton.Enabled = currentReview && reviewProgress == ReviewProgress.Previewed && !isBusy;
-			validateButton.Enabled = currentReview && (reviewProgress == ReviewProgress.Saved || reviewProgress == ReviewProgress.ValidationFailed) && !isBusy;
-			testCenterButton.Enabled = currentReview && reviewProgress == ReviewProgress.Validated && !preflightCurrent && !isBusy;
-			submitButton.Enabled = preflightCurrent && reviewProgress == ReviewProgress.Validated && !isBusy;
+			UpdateReviewWorkflowStatus(errors, currentFingerprint, currentReview);
 			previewModeButton.Enabled = technicalPreviewText.Length > 0 && !isBusy;
 		}
 		finally
@@ -2596,6 +3119,148 @@ public partial class MainForm : Form
 			refreshingReadiness = false;
 		}
 		UpdateTestPlanStatus();
+	}
+
+	private void UpdateReviewWorkflowStatus(IReadOnlyList<string> errors, string currentFingerprint, bool currentReview)
+	{
+		if (reviewNextActionButton is null || reviewNextActionButton.IsDisposed || reviewProgressSteps.Length == 0) return;
+		bool projectReady = errors.Count == 0;
+		bool previewComplete = currentReview && reviewProgress != ReviewProgress.Editing;
+		bool saveComplete = currentReview && reviewProgress is ReviewProgress.Saved or ReviewProgress.ValidationFailed or ReviewProgress.Validated;
+		bool validationComplete = currentReview && reviewProgress == ReviewProgress.Validated;
+		bool testingComplete = validationComplete
+			&& localManifestFilesEnabled
+			&& string.Equals(successfulPreflightFingerprint, currentFingerprint, StringComparison.Ordinal)
+			&& string.Equals(successfulLocalInstallFingerprint, currentFingerprint, StringComparison.Ordinal)
+			&& string.Equals(verifiedInstalledFingerprint, currentFingerprint, StringComparison.Ordinal);
+		bool validationFailed = currentReview && reviewProgress == ReviewProgress.ValidationFailed;
+		bool[] complete = [previewComplete, saveComplete, validationComplete, testingComplete];
+		string[] completeText = ["PREVIEWED", "SAVED", "VALIDATED", "COMPLETE"];
+		int currentStep = !previewComplete ? 0 : !saveComplete ? 1 : !validationComplete ? 2 : 3;
+
+		for (int index = 0; index < reviewProgressSteps.Length; index++)
+		{
+			StudioStepState state = complete[index]
+				? StudioStepState.Complete
+				: index == currentStep
+					? (!projectReady || validationFailed ? StudioStepState.Problem : StudioStepState.Current)
+					: StudioStepState.Pending;
+			reviewProgressSteps[index].State = state;
+			reviewProgressSteps[index].StatusText = complete[index] ? completeText[index] : index == currentStep ? state == StudioStepState.Problem ? "NEEDS ATTENTION" : "NEXT" : "WAITING";
+			reviewProgressSteps[index].AccessibleDescription = reviewProgressSteps[index].StatusText;
+			if (index < reviewStatusPills.Length)
+			{
+				reviewStatusPills[index].State = state;
+				reviewStatusPills[index].Text = complete[index] ? completeText[index] : index == currentStep ? state == StudioStepState.Problem ? "FIX FIRST" : "NEXT" : "WAITING";
+				reviewStatusPills[index].AccessibleName = $"Review step {index + 1} status: {reviewStatusPills[index].Text}";
+			}
+		}
+
+		if (!projectReady)
+		{
+			readinessLabel.Text = $"PROJECT NEEDS {errors.Count} FIX{(errors.Count == 1 ? string.Empty : "ES")}   •   REVIEW LOCKED";
+			readinessLabel.ForeColor = StudioPalette.Warning;
+			reviewActionTitleLabel.Text = "Fix the package information";
+			reviewActionDescriptionLabel.Text = SimplifyReadinessError(errors[0]) + ". The Studio will return you to the correct page.";
+			reviewActionSafetyLabel.Text = "REQUIRED · Preview stays locked until this is corrected";
+			reviewActionSafetyLabel.ForeColor = StudioPalette.Warning;
+			reviewNextActionButton.Text = "Open the field to fix";
+			reviewNextActionButton.Tag = "fix-project";
+		}
+		else if (validationFailed)
+		{
+			readinessLabel.Text = "WINGET FOUND A PROBLEM   •   NOTHING WAS SUBMITTED";
+			readinessLabel.ForeColor = StudioPalette.Warning;
+			reviewActionTitleLabel.Text = "Fix the validation problem";
+			reviewActionDescriptionLabel.Text = "The plain-language result below names the problem and where to correct it. Then preview and save again.";
+			reviewActionSafetyLabel.Text = "STOP · Submission remains locked until validation passes";
+			reviewActionSafetyLabel.ForeColor = StudioPalette.Warning;
+			reviewNextActionButton.Text = "Open the fields to fix";
+			reviewNextActionButton.Tag = "fix-validation";
+		}
+		else if (!previewComplete)
+		{
+			readinessLabel.Text = $"READY TO REVIEW   •   {project.PackageIdentifier}   •   {project.Installers.Count} INSTALLER{(project.Installers.Count == 1 ? string.Empty : "S")}";
+			readinessLabel.ForeColor = AccentColor;
+			reviewActionTitleLabel.Text = "Preview the proposed changes";
+			reviewActionDescriptionLabel.Text = "Builds the exact manifest changes in memory and explains them below. No files are written.";
+			reviewActionSafetyLabel.Text = "SAFE · Preview does not change any files";
+			reviewActionSafetyLabel.ForeColor = SuccessColor;
+			reviewNextActionButton.Text = "Preview changes";
+			reviewNextActionButton.Tag = "preview";
+		}
+		else if (!saveComplete)
+		{
+			readinessLabel.Text = "PREVIEW READY   •   NOTHING HAS BEEN SAVED";
+			readinessLabel.ForeColor = AccentColor;
+			reviewActionTitleLabel.Text = "Save the reviewed manifests";
+			reviewActionDescriptionLabel.Text = "Writes the reviewed YAML to the output folder after creating recoverable backups of existing files.";
+			reviewActionSafetyLabel.Text = "PROTECTED · Existing manifests are backed up first";
+			reviewActionSafetyLabel.ForeColor = SuccessColor;
+			reviewNextActionButton.Text = "Save manifests";
+			reviewNextActionButton.Tag = "save";
+		}
+		else if (!validationComplete)
+		{
+			readinessLabel.Text = "SAVED SAFELY   •   READY FOR OFFICIAL VALIDATION";
+			readinessLabel.ForeColor = AccentColor;
+			reviewActionTitleLabel.Text = "Validate with Winget";
+			reviewActionDescriptionLabel.Text = "Runs Microsoft's Winget validator against a clean temporary copy. It does not install the package.";
+			reviewActionSafetyLabel.Text = "SAFE · Validation does not change the saved manifests";
+			reviewActionSafetyLabel.ForeColor = SuccessColor;
+			reviewNextActionButton.Text = "Validate locally";
+			reviewNextActionButton.Tag = "validate";
+		}
+		else if (!testingComplete)
+		{
+			readinessLabel.Text = "VALIDATION PASSED   •   READY FOR TEST CENTER";
+			readinessLabel.ForeColor = SuccessColor;
+			reviewActionTitleLabel.Text = "Continue to Test Center";
+			reviewActionDescriptionLabel.Text = "Run safe preflight, test the installation, verify the result, and submit from one guided screen.";
+			reviewActionSafetyLabel.Text = "NEXT · Testing and submission continue without returning here";
+			reviewActionSafetyLabel.ForeColor = AccentColor;
+			reviewNextActionButton.Text = "Open Test Center";
+			reviewNextActionButton.Tag = "test-center";
+		}
+		else
+		{
+			readinessLabel.Text = "ALL REVIEW AND INSTALLATION TESTS PASSED";
+			readinessLabel.ForeColor = SuccessColor;
+			reviewActionTitleLabel.Text = "Ready to submit in Test Center";
+			reviewActionDescriptionLabel.Text = "All required review and installation checks passed. The submission action is ready in Test Center.";
+			reviewActionSafetyLabel.Text = "READY · Microsoft's WingetCreate handles the submission";
+			reviewActionSafetyLabel.ForeColor = SuccessColor;
+			reviewNextActionButton.Text = "Open Test Center to submit";
+			reviewNextActionButton.Tag = "test-center";
+		}
+
+		reviewNextActionButton.Enabled = !isBusy;
+		reviewNextActionButton.AccessibleName = reviewNextActionButton.Text;
+		if (reviewNextActionButton is StudioButton studioButton) studioButton.ButtonKind = StudioButtonKind.Primary;
+	}
+
+	private async Task RunNextReviewActionAsync()
+	{
+		switch (reviewNextActionButton.Tag as string)
+		{
+			case "fix-project":
+				List<string> errors = ManifestService.Validate(project);
+				string first = errors.FirstOrDefault() ?? string.Empty;
+				SelectTab(first.Contains("installer", StringComparison.OrdinalIgnoreCase)
+					|| first.Contains("hash", StringComparison.OrdinalIgnoreCase)
+					|| first.Contains("architecture", StringComparison.OrdinalIgnoreCase)
+					? "Installers & Hashes" : "Package Details");
+				break;
+			case "fix-validation":
+				SelectTab(simplePreviewText.Contains("3 Installers", StringComparison.OrdinalIgnoreCase)
+					&& !simplePreviewText.Contains("2 Package", StringComparison.OrdinalIgnoreCase)
+					? "Installers & Hashes" : "Package Details");
+				break;
+			case "preview": GeneratePreview(); break;
+			case "save": SaveManifests(); break;
+			case "validate": await ValidateWithWingetAsync(); break;
+			case "test-center": SelectTab("Test Center"); break;
+		}
 	}
 
 	private void SetFieldError(string field, IEnumerable<string> errors, string prefix)
@@ -2922,10 +3587,10 @@ public partial class MainForm : Form
 		return card;
 	}
 
-	private Control CreateInfoStrip(string heading, string message)
+	private Control CreateInfoStrip(string heading, string message, int headingWidth = 190)
 	{
 		StudioCard panel = new() { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, BackColor = Color.FromArgb(8, 42, 54), Padding = new Padding(14), Margin = new Padding(4, 4, 4, 8), CornerRadius = 10 };
-		panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
+		panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, headingWidth));
 		panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 		panel.Controls.Add(new Label { Text = heading, Dock = DockStyle.Fill, AutoSize = true, Font = new Font("Segoe UI Semibold", 9F), ForeColor = AccentColor }, 0, 0);
 		panel.Controls.Add(new Label { Text = message, Dock = DockStyle.Fill, AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = Color.FromArgb(195, 218, 236) }, 1, 0);
@@ -3076,19 +3741,54 @@ public partial class MainForm : Form
 				navigationButtons.TryGetValue("Test Center", out StudioNavButton? testCenterButton)
 					&& testCenterButton.Text.Contains("Test Center", StringComparison.Ordinal),
 				"Test Center is clearly named in the main navigation");
-			Record(testPlanLabel.Text.Contains("1  Preflight", StringComparison.Ordinal)
-				&& testPlanLabel.Text.Contains("2  Local testing", StringComparison.Ordinal)
-				&& testPlanLabel.Text.Contains("Next:", StringComparison.Ordinal),
-				"Test Center shows the required order and one clear next action");
+			SelectTab("Test Center");
+			Application.DoEvents();
+			Record(testPlanLabel.Text.Contains("PROJECT", StringComparison.Ordinal)
+				&& nextTestActionTitleLabel.Text.Length > 0
+				&& nextTestActionDescriptionLabel.Text.Length > 0,
+				"Test Center explains project readiness and one clear next action");
 			TableLayoutPanel? testWorkspace = Descendants(this).OfType<TableLayoutPanel>()
-				.FirstOrDefault(panel => panel.AccessibleName == "Test Center split workspace");
+				.FirstOrDefault(panel => panel.AccessibleName == "Test Center guided workspace");
 			Record(testWorkspace is { ColumnCount: 2 }
-				&& Descendants(testWorkspace).Any(control => control.AccessibleName == "Required test steps")
-				&& Descendants(testWorkspace).Any(control => control.AccessibleName == "Test results and optional tools"),
-				"Test Center separates required steps from results and optional tools");
+				&& Descendants(testWorkspace).Any(control => control.AccessibleName == "Current test action and results")
+				&& Descendants(testWorkspace).Any(control => control.AccessibleName == "Test checklist and optional tools"),
+				"Test Center separates the current action, results, and checklist");
+			Record(testProgressSteps.Length == 4 && testProgressSteps.All(step => step.Width > 120 && step.Height >= 70),
+				"A four-step horizontal progress tracker replaces the repeated action cards");
+			Record(nextTestActionButton.Height == 54 && nextTestActionButton.Parent is TableLayoutPanel,
+				"The Test Center presents one large primary next-action button");
+			Record(testStatusPills.Length == 4 && testStatusPills.All(pill => pill.Width > 80 && pill.Height is >= 26 and <= 32),
+				"The compact checklist shows a distinct status for every required test",
+				string.Join(", ", testStatusPills.Select(pill => $"{pill.Bounds} in {pill.Parent?.ClientRectangle}")));
+			Record(testOptionalToolsCard is { Visible: false } && optionalToolsToggleButton.Visible,
+				"Optional diagnostics are hidden by default to keep the required workflow uncluttered");
+			Button? exportReportButton = Descendants(this).OfType<Button>().FirstOrDefault(button => button.Text == "Export test report");
+			Record(exportReportButton?.Parent is TableLayoutPanel optionalTools && optionalTools.GetColumnSpan(exportReportButton) == 2,
+				"Optional tools grid has no empty final cell");
 			string[] removedStartActions = ["Continue where you left off", "Restore Last Session", "Open Recent Project"];
 			Record(!Descendants(this).Any(control => removedStartActions.Contains(control.Text, StringComparer.OrdinalIgnoreCase)),
 				"Removed session recovery and recent-project actions are absent from the interface");
+			SelectTab("Installers & Hashes");
+			Application.DoEvents();
+			Button? installerUrlStep = Descendants(this).OfType<Button>().FirstOrDefault(button => button.Text == "2 Enter Public URL");
+			Record(installerUrlStep is { Visible: true }, "Installer workflow visibly includes step 2 for the public URL");
+
+			SelectTab("Preview & Submit");
+			Application.DoEvents();
+			TableLayoutPanel? reviewWorkspace = Descendants(this).OfType<TableLayoutPanel>()
+				.FirstOrDefault(panel => panel.AccessibleName == "Review guided workspace");
+			Record(reviewWorkspace is { ColumnCount: 2 }
+				&& Descendants(reviewWorkspace).Any(control => control.AccessibleName == "Current review action and plain-language results")
+				&& Descendants(reviewWorkspace).Any(control => control.AccessibleName == "Review checklist and view options"),
+				"Review uses the same guided action, results, and checklist structure as Test Center");
+			Record(reviewProgressSteps.Length == 4 && reviewProgressSteps.All(step => step.Width > 120 && step.Height >= 70),
+				"Review has a four-step horizontal progress tracker");
+			Record(reviewNextActionButton.Height == 54 && reviewNextActionButton.Parent is TableLayoutPanel,
+				"Review presents one large primary next-action button");
+			Record(reviewStatusPills.Length == 4 && reviewStatusPills.All(pill => pill.Width > 80 && pill.Height is >= 26 and <= 32),
+				"Review checklist has aligned status tags");
+			Record(previewModeButton.Text == "Show technical YAML" && !showingTechnicalPreview,
+				"Technical YAML is hidden behind a clearly named secondary action");
 
 			StudioTextBox[] textBoxes = Descendants(this).OfType<StudioTextBox>().Where(control => control.Enabled && !control.ReadOnly).ToArray();
 			foreach (StudioTextBox textBox in textBoxes)
@@ -3186,35 +3886,37 @@ public partial class MainForm : Form
 			Write("ManifestFolder", Path.Combine(Path.GetTempPath(), "WingetManifestStudioUiTest"));
 			gridItem.Sha256 = new string('A', 64);
 			RefreshReadiness();
-			Record(!previewButton.Enabled && !saveButton.Enabled && fieldErrors.GetError(fields["PackageIdentifier"]).Length > 0,
+			Record(reviewNextActionButton.Text == "Open the field to fix" && fieldErrors.GetError(fields["PackageIdentifier"]).Length > 0,
 				"Invalid fields are explained and the guided review is blocked");
 			Write("PackageIdentifier", "Contoso.Sample");
 			RefreshReadiness();
-			Record(previewButton.Enabled && !saveButton.Enabled && !validateButton.Enabled && readinessLabel.Text.StartsWith("READY", StringComparison.Ordinal),
+			Record(reviewNextActionButton is { Enabled: true } && reviewNextActionButton.Text == "Preview changes" && readinessLabel.Text.StartsWith("READY", StringComparison.Ordinal),
 				"Ready projects clearly unlock Preview as the only next step", string.Join(" | ", ManifestService.Validate(project)));
 			GeneratePreview();
 			bool simpleReviewVisible = simplePreviewText?.Contains("WHAT NEEDS ATTENTION", StringComparison.Ordinal) == true;
-			Record(saveButton is { Enabled: true } && validateButton is not { Enabled: true } && simpleReviewVisible,
+			Record(reviewNextActionButton is { Enabled: true } && reviewNextActionButton.Text == "Save manifests" && simpleReviewVisible && !showingTechnicalPreview,
 				"A simple preview unlocks Save and keeps technical YAML hidden");
 			SaveManifests();
 			string savedReadiness = readinessLabel.Text ?? string.Empty;
-			Record(saveButton is not { Enabled: true } && validateButton is { Enabled: true } && savedReadiness.StartsWith("SAVED", StringComparison.Ordinal),
+			Record(reviewNextActionButton is { Enabled: true } && reviewNextActionButton.Text == "Validate locally" && savedReadiness.StartsWith("SAVED", StringComparison.Ordinal),
 				"Saving unlocks Validate as the next step");
 			SetReviewProgress(ReviewProgress.Validated);
 			string validationReadiness = readinessLabel.Text ?? string.Empty;
-			Record(testCenterButton is { Enabled: true } && submitButton is not { Enabled: true } && validationReadiness.StartsWith("VALIDATION PASSED", StringComparison.Ordinal),
+			Record(reviewNextActionButton is { Enabled: true } && reviewNextActionButton.Text == "Open Test Center" && validationReadiness.StartsWith("VALIDATION PASSED", StringComparison.Ordinal),
 				"Successful validation unlocks Test Center as the next step");
 			successfulPreflightFingerprint = ProjectFingerprint();
 			RefreshReadiness();
-			string preflightReadiness = readinessLabel.Text ?? string.Empty;
-			Record(submitButton is { Enabled: true } && preflightReadiness.StartsWith("SAFE PREFLIGHT PASSED", StringComparison.Ordinal),
-				"Safe Preflight unlocks submission as the final step");
+			Record(reviewNextActionButton.Text == "Open Test Center" && reviewProgressSteps[3].State == StudioStepState.Current,
+				"Review keeps installation testing and submission in Test Center");
 			localManifestFilesEnabled = true;
 			successfulLocalInstallFingerprint = ProjectFingerprint();
 			verifiedInstalledFingerprint = ProjectFingerprint();
-			UpdateTestPlanStatus();
-			Record(testSubmitButton is { Enabled: true } && testPlanLabel.Text.Contains("without leaving this page", StringComparison.Ordinal),
+			RefreshReadiness();
+			Record(nextTestActionButton is { Enabled: true } && nextTestActionButton.Text == "Submit to Winget"
+				&& testProgressSteps.All(step => step.State == StudioStepState.Complete),
 				"Completing all four tests unlocks submission directly in Test Center");
+			Record(reviewProgressSteps[3].State == StudioStepState.Complete && reviewNextActionButton.Text == "Open Test Center to submit",
+				"Review reflects completed Test Center checks without duplicating the submission workflow");
 
 			int responsiveTicks = 0;
 			using (System.Windows.Forms.Timer responsivenessTimer = new() { Interval = 20 })
@@ -3271,6 +3973,8 @@ public partial class MainForm : Form
 			Record(readinessLabel.Width > 0 && readinessLabel.Height > 0, "Project readiness guidance is visible");
 			Record(installerGrid.Columns.Count >= 9, "Installer grid contains the complete editing columns");
 			Record(BuildFileDialogFilter([".msi", ".exe"]).Contains("*.msi;*.exe", StringComparison.Ordinal), "Windows file picker filter includes every supported installer type");
+			testOptionalToolsCard.Visible = false;
+			optionalToolsToggleButton.Text = "Show optional tools";
 		}
 		catch (Exception ex)
 		{

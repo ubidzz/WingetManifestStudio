@@ -37,6 +37,8 @@ internal static class UiSelfTestRunner
 			try
 			{
 				report.AddRange(await form.RunUiVerificationAsync());
+				form.RenderTabForVerification("Installers & Hashes", Path.Combine(AppContext.BaseDirectory, "ui-installers.png"));
+				form.RenderTabForVerification("Preview & Submit", Path.Combine(AppContext.BaseDirectory, "ui-review.png"));
 				form.RenderTabForVerification("Test Center", Path.Combine(AppContext.BaseDirectory, "ui-test-center.png"));
 				exitCode = report.Any(line => line.StartsWith("FAIL", StringComparison.Ordinal)) ? 1 : 0;
 			}

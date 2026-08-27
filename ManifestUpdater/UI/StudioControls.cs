@@ -84,6 +84,156 @@ internal sealed class StudioCard : TableLayoutPanel
 	}
 }
 
+internal enum StudioStepState
+{
+	Pending,
+	Current,
+	Complete,
+	Problem
+}
+
+internal sealed class StudioTestProgressStep : Control
+{
+	private readonly Font titleFont = new("Segoe UI Semibold", 9F, FontStyle.Bold);
+	private readonly Font statusFont = new("Segoe UI", 8F);
+	private StudioStepState state;
+	private string title = string.Empty;
+	private string statusText = "Waiting";
+
+	[DefaultValue(1)]
+	public int StepNumber { get; set; } = 1;
+
+	[DefaultValue(false)]
+	public bool IsFirst { get; set; }
+
+	[DefaultValue(false)]
+	public bool IsLast { get; set; }
+
+	[DefaultValue(StudioStepState.Pending)]
+	public StudioStepState State
+	{
+		get => state;
+		set { state = value; Invalidate(); }
+	}
+
+	[DefaultValue("")]
+	public string Title
+	{
+		get => title;
+		set { title = value ?? string.Empty; Invalidate(); }
+	}
+
+	[DefaultValue("Waiting")]
+	public string StatusText
+	{
+		get => statusText;
+		set { statusText = value ?? string.Empty; Invalidate(); }
+	}
+
+	public StudioTestProgressStep()
+	{
+		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+		BackColor = StudioPalette.Card;
+		MinimumSize = new Size(130, 72);
+		AccessibleRole = AccessibleRole.Indicator;
+	}
+
+	protected override void OnPaint(PaintEventArgs eventArgs)
+	{
+		base.OnPaint(eventArgs);
+		Graphics graphics = eventArgs.Graphics;
+		graphics.SmoothingMode = SmoothingMode.AntiAlias;
+		graphics.Clear(BackColor);
+
+		int centerX = Width / 2;
+		const int centerY = 22;
+		const int radius = 13;
+		Color completedLine = state == StudioStepState.Complete ? StudioPalette.Accent : StudioPalette.Divider;
+		using Pen beforePen = new(state is StudioStepState.Complete or StudioStepState.Current ? StudioPalette.Accent : StudioPalette.Divider, 2F);
+		using Pen afterPen = new(completedLine, 2F);
+		if (!IsFirst) graphics.DrawLine(beforePen, 0, centerY, centerX - radius, centerY);
+		if (!IsLast) graphics.DrawLine(afterPen, centerX + radius, centerY, Width, centerY);
+
+		(Color fill, Color border, Color text) = state switch
+		{
+			StudioStepState.Complete => (StudioPalette.Accent, StudioPalette.Accent, Color.FromArgb(2, 24, 28)),
+			StudioStepState.Current => (StudioPalette.AccentSoft, StudioPalette.Accent, StudioPalette.Accent),
+			StudioStepState.Problem => (Color.FromArgb(62, 45, 18), StudioPalette.Warning, StudioPalette.Warning),
+			_ => (StudioPalette.Input, StudioPalette.Divider, StudioPalette.MutedText)
+		};
+		Rectangle circle = new(centerX - radius, centerY - radius, radius * 2, radius * 2);
+		using SolidBrush fillBrush = new(fill);
+		using Pen borderPen = new(border, state == StudioStepState.Current ? 2F : 1F);
+		graphics.FillEllipse(fillBrush, circle);
+		graphics.DrawEllipse(borderPen, circle);
+
+		string marker = state == StudioStepState.Complete ? "✓" : StepNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+		TextRenderer.DrawText(graphics, marker, titleFont, circle, text,
+			TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+		Rectangle titleBounds = new(4, 42, Math.Max(1, Width - 8), 19);
+		Rectangle statusBounds = new(4, 60, Math.Max(1, Width - 8), 18);
+		TextRenderer.DrawText(graphics, title, titleFont, titleBounds, StudioPalette.PrimaryText,
+			TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+		TextRenderer.DrawText(graphics, statusText, statusFont, statusBounds,
+			state == StudioStepState.Problem ? StudioPalette.Warning : state == StudioStepState.Complete ? StudioPalette.Success : StudioPalette.MutedText,
+			TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+	}
+
+	protected override void Dispose(bool disposing)
+	{
+		if (disposing)
+		{
+			titleFont.Dispose();
+			statusFont.Dispose();
+		}
+		base.Dispose(disposing);
+	}
+}
+
+internal sealed class StudioStatusPill : Control
+{
+	private StudioStepState state;
+
+	[DefaultValue(StudioStepState.Pending)]
+	public StudioStepState State
+	{
+		get => state;
+		set { state = value; Invalidate(); }
+	}
+
+	public StudioStatusPill()
+	{
+		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+		BackColor = StudioPalette.Card;
+		ForeColor = StudioPalette.PrimaryText;
+		Font = new Font("Segoe UI Semibold", 8F, FontStyle.Bold);
+		MinimumSize = new Size(86, 26);
+		Size = new Size(96, 26);
+		AccessibleRole = AccessibleRole.StaticText;
+	}
+
+	protected override void OnPaint(PaintEventArgs eventArgs)
+	{
+		eventArgs.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+		eventArgs.Graphics.Clear(Parent?.BackColor ?? StudioPalette.Card);
+		(Color fill, Color border, Color text) = state switch
+		{
+			StudioStepState.Complete => (Color.FromArgb(13, 61, 49), Color.FromArgb(42, 128, 99), StudioPalette.Success),
+			StudioStepState.Current => (StudioPalette.AccentSoft, StudioPalette.Accent, StudioPalette.Accent),
+			StudioStepState.Problem => (Color.FromArgb(62, 45, 18), Color.FromArgb(132, 94, 24), StudioPalette.Warning),
+			_ => (StudioPalette.Input, StudioPalette.Divider, StudioPalette.MutedText)
+		};
+		Rectangle bounds = new(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
+		using GraphicsPath path = StudioGeometry.RoundedRectangle(bounds, 7);
+		using SolidBrush fillBrush = new(fill);
+		using Pen borderPen = new(border);
+		eventArgs.Graphics.FillPath(fillBrush, path);
+		eventArgs.Graphics.DrawPath(borderPen, path);
+		TextRenderer.DrawText(eventArgs.Graphics, Text, Font, bounds, text,
+			TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+	}
+}
+
 internal enum StudioButtonKind
 {
 	Secondary,

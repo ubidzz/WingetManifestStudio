@@ -1,142 +1,232 @@
 # Winget Manifest Studio
 
-Winget Manifest Studio is a free Windows desktop tool for creating, updating, checking, and submitting Microsoft Winget package manifests without editing YAML by hand.
+Winget Manifest Studio is a Windows desktop application for creating, updating, validating, testing, and submitting Windows Package Manager manifests without editing YAML by hand.
 
-The program is designed for people who may be publishing their first Windows application. It keeps installer files local, calculates SHA-256 hashes automatically, reads MSI identity values when available, previews every change, and backs up existing manifests before saving.
+It is designed for first-time package publishers while retaining the controls experienced maintainers need. Microsoft WingetCreate remains responsible for official authentication and submission.
 
-## What You Need
+## Highlights
 
-- A Windows installer or portable release file that you plan to publish.
-- A public HTTPS download link for that exact file, normally from a GitHub release.
-- Basic package information such as the application name, publisher, version, license, description, and support link.
-- WingetCreate only when you are ready to use Microsoft's official validation or submission workflow.
+- Create a new three-file Winget manifest project.
+- Load and safely update an existing manifest folder.
+- Preserve parsed custom and unsupported YAML fields.
+- Calculate SHA-256 hashes from local release files.
+- Read supported MSI ProductCode and UpgradeCode values.
+- Inspect Authenticode and MSIX/APPX signature information.
+- Verify that public download URLs match attached local files.
+- Preview changes without writing files.
+- Create timestamped backups before replacing manifests.
+- Validate with the official Winget command.
+- Test a manifest installation locally or in Windows Sandbox.
+- Confirm the installed package and version.
+- Submit through Microsoft's official WingetCreate workflow.
+- Keep GitHub authentication in WingetCreate and Windows Credential Manager.
 
-## Update an Existing Winget Package
+## Requirements
 
-1. Select **Load existing manifests**.
-2. Choose the folder containing the package YAML files.
-3. Review **Package Details** and enter the new version without a leading `v`.
-4. Open **Installers & Hashes** and attach the exact local release file.
-5. Enter the public HTTPS URL where Winget will download that file.
-6. Select **Inspect & Fill Details**. The Studio calculates the SHA-256 hash and reads supported installer information.
-7. After uploading the release, select **Verify Public URLs** to prove the public downloads match those hashes.
-8. Follow **Project Readiness**, then open **Preview & Submit** and select **Preview Changes**.
-9. Select **Save Manifests** only after the preview is correct.
-10. Open **Test Center** and run **Safe Preflight**.
-11. Run **Test Install Here** or **Test in Windows Sandbox**, then verify the installed result.
-12. Submit with Microsoft's official WingetCreate tool when ready. The submission opens the pull request in `microsoft/winget-pkgs`.
+For normal use:
 
-## Create a New Winget Package
+- Windows 10 or Windows 11, x64.
+- Microsoft .NET 10 Desktop Runtime x64 when using the framework-dependent EXE or MSI.
+- Windows App Installer, which provides the `winget` command.
+- A public HTTPS address for every installer that Winget will download.
 
-1. Select **Create a new project** and choose an empty output folder.
-2. Complete the required fields under **Package Details**.
-3. Add the release installer under **Installers & Hashes**.
-4. Enter the public installer URL and inspect the file.
-5. Preview the generated version, locale, and installer manifests.
-6. Use **Find Existing Package** to confirm that the package identifier is new.
-7. Save, validate, and test-install the files.
-8. Submit them with WingetCreate.
+WingetCreate is only required for its official commands and submission workflow. Windows Sandbox is optional and must already be enabled in Windows before using the Sandbox test.
 
-## Test Center
+## Install
 
-The Test Center separates checks that do not install anything from tests that can change a computer.
+Download `SynixStudioSetup.msi` from the repository's [Releases](https://github.com/ubidzz/WingetManifestStudio/releases) page and run it normally. Administrator permission is not required to edit manifests. Windows may request approval only for operations that inherently require elevation, such as enabling Winget local-manifest testing or running an installer that requires it.
 
-**Run Safe Preflight** performs these checks without launching an installer:
+The published setup is intentionally framework-dependent and does **not** bundle the .NET 10 framework. Install the Microsoft .NET 10 Desktop Runtime x64 if Windows reports that the runtime is missing.
 
-- Generates every managed manifest, including additional locale manifests.
-- Recalculates attached local-file hashes and compares them with the YAML.
-- Checks Authenticode signer, certificate dates, and Windows trust.
-- Runs the official `winget validate --manifest <folder>` command against a clean temporary folder.
-- Searches the configured Winget source and `microsoft/winget-pkgs` for the exact package identifier.
-- Produces an exportable test report.
+## Guided Workflow
 
-**Test Install Here** runs the official local-manifest installation command in a persistent console:
+The main navigation follows the required order:
 
-```text
-winget install --manifest <folder>
-```
+1. **Start**
+2. **Package**
+3. **Installers**
+4. **Review**
+5. **Test Center**
 
-Windows requires a one-time administrator action to enable local manifests. The **Enable Local Testing** button runs only:
+Help and official WingetCreate commands remain available separately and are not extra required steps.
 
-```text
-winget settings --enable LocalManifestFiles
-```
+### 1. Start
 
-The application itself remains non-administrator for normal work. **Verify Installed Result** checks the exact identifier and expected version after installation.
+Choose one of these paths:
 
-**Test in Windows Sandbox** downloads Microsoft's current official `Tools/SandboxTest.ps1` from `microsoft/winget-pkgs`, validates the generated manifests, and launches the test in a disposable Windows Sandbox. Windows Sandbox must already be enabled as an optional Windows feature.
+- **Create a new project** selects an output folder for a new manifest set.
+- **Load existing manifests** reads the YAML files in an existing package folder.
 
-## YAML and Current Schema Coverage
+Loading and previewing do not modify the selected manifests.
 
-Existing manifests are parsed as YAML document trees instead of being split with regular expressions. This provides structural preservation for unknown root fields, unknown nested installer fields, YAML lists and mappings, installer rows in any key order, and additional locale manifests. Installer rows are matched by ProductCode, URL, architecture, type, and scope rather than only by row number.
+### 2. Package
 
-The guided interface includes the common locale, installer behavior, installer switch, platform, protocol, file-extension, release-date, repair, and boolean fields in the Winget 1.12 schema. **Additional locale fields**, **Additional installer fields**, and **Additional row YAML** accept validated mappings for every uncommon or nested schema field, including agreements, documentation, icons, dependencies, markets, expected return codes, nested installer files, authentication, and installation metadata.
+Complete the required package identity and public information. A package identifier normally uses `Publisher.ApplicationName`, contains a dot, and stays unchanged between releases. Enter versions without a leading `v`.
 
-YAML comments and hand-formatted spacing are not schema data and may be normalized when an edited document is emitted. Parsed keys, sequences, mappings, anchors, aliases, and scalar values remain in the document. Timestamped source backups preserve the exact original text before every save.
+Every field includes beginner guidance. Uncommon schema fields are available under the optional sections and may be left blank when they do not apply.
 
-## Existing Package and Pull Request Workflow
+### 3. Installers
 
-**Find Existing Package** checks both Winget and the official GitHub manifest path. Submission repeats this lookup automatically, requires a successful Safe Preflight for the exact current project, saves recoverable backups, and then launches WingetCreate's official `submit` workflow. GitHub authentication remains owned by WingetCreate and Windows Credential Manager.
+Follow the four numbered actions shown across the top:
 
-## Interface Languages
+1. **Add Release Files** — select the exact local MSI, EXE, MSIX, APPX, bundle, ZIP, portable package, or other supported release file.
+2. **Enter Public URL** — paste the direct public HTTPS download link into the selected installer row.
+3. **Inspect & Fill Selected** — calculate the hash and read supported installer metadata.
+4. **Verify Public URLs** — download each published file temporarily and prove that it matches the attached local file and SHA-256.
 
-The interface has English and Spanish resources. Change the language at the top of **Help & Guide**. The choice is stored in the current user's local application settings and is not written into project profiles.
+Use one installer row for each architecture or installer variation. A release webpage is not an installer URL; use the direct release-asset URL.
 
-## Important Field Meanings
+### 4. Review
 
-| Field | What to enter |
-| --- | --- |
-| Package identifier | A stable ID such as `Publisher.ApplicationName`. Do not change it between releases. |
-| Package version | The release version without a leading `v`, such as `1.2.3`. |
-| Default locale | Usually `en-US`. |
-| Installer URL | The public HTTPS address for the exact release file. |
-| SHA-256 | Filled automatically from the selected local release file. |
-| ProductCode | Read automatically from MSI packages. Usually blank for ordinary EXE installers. |
-| UpgradeCode | Read automatically from MSI packages. Usually blank for ordinary EXE installers. |
-| Commands | Optional command aliases installed by the package. Existing values are preserved during updates. |
+Review uses the same guided design as Test Center. A four-step progress tracker and one highlighted action lead through:
+
+1. **Preview** — builds the proposed YAML in memory.
+2. **Save safely** — writes the reviewed manifests after backing up existing files.
+3. **Validate** — runs Microsoft's Winget validator against a clean temporary copy.
+4. **Test & submit** — continues to Test Center for installation testing and submission.
+
+The plain-language review is shown by default. Technical YAML remains behind **Show technical YAML** and is available whenever exact output or a complete validator error is needed.
+
+### 5. Test Center
+
+Test Center presents one required action at a time:
+
+1. **Safe preflight** checks generated YAML, hashes, signatures, official validation, and whether the package identifier already exists. It does not install anything.
+2. **Allow local testing** enables Winget's `LocalManifestFiles` setting after one Windows administrator approval.
+3. **Test install** runs the exact generated manifest through:
+
+   ```text
+   winget install --manifest <folder>
+   ```
+
+4. **Verify result** checks the Winget package ID, then the MSI identity or installed application name when necessary.
+
+After all four checks pass, the highlighted action becomes **Submit to Winget**. Submission stays in Test Center; there is no need to return to Review.
+
+Optional diagnostics—including setup checks, signature inspection, existing-package search, Sandbox testing, and report export—remain collapsed until requested.
+
+## Updating an Existing Package
+
+1. Load the folder containing the existing Winget YAML files.
+2. Confirm the package identifier and enter the new version.
+3. Attach the new local release files.
+4. Replace each public URL with the matching new release-asset URL.
+5. Inspect the files and verify the public URLs.
+6. Preview the proposed changes.
+7. Save, validate, and complete Test Center.
+8. Submit through WingetCreate.
+
+Unsupported parsed fields are preserved structurally. The original files are also copied to a timestamped `.manifest-backups` folder before any replacement.
+
+## YAML Preservation
+
+Existing manifests are parsed as YAML document trees. The update process preserves parsed root fields, nested mappings, sequences, additional locale documents, uncommon installer values, aliases, anchors, and custom schema fields that the guided interface does not directly expose.
+
+Installer rows are matched using stable values such as ProductCode, URL, architecture, installer type, and scope instead of relying only on row position.
+
+There are two intentional limitations:
+
+- Comments and hand-formatted spacing are not schema data and may be normalized when edited YAML is emitted.
+- Invalid YAML that cannot be parsed cannot receive structural preservation. The original source remains untouched unless a validated save succeeds, and backups preserve its exact text.
 
 ## Safety and Privacy
 
-- Loading manifests does not change them.
-- Previewing does not write files.
-- Existing manifests receive timestamped backups before saving.
-- Installer files are inspected locally and are not uploaded by the Studio.
-- Authenticode inspection reads public certificate information only; it never accesses a signing private key.
-- Installation and Sandbox tests never run automatically.
-- The WingetCreate GitHub token remains in Windows Credential Manager and is not stored in a Studio profile.
-- Unsaved editing sessions are recovered from the current user's local application data and never contain authentication tokens.
+- Loading and previewing never change manifest files.
+- Existing manifests are backed up before replacement.
+- Installer inspection and hashing happen locally.
+- Public URL verification downloads to a temporary location and does not replace the attached file.
+- Installation and Sandbox tests require an explicit user action.
+- Interactive commands open a persistent console so questions and errors remain visible.
+- GitHub tokens are owned by WingetCreate and Windows Credential Manager.
+- Tokens are never stored in manifests, project profiles, logs, or repository files.
+- The application does not require administrator permission for ordinary editing.
 
-## Build and Publish
+## Supported Installer Formats
 
-The project targets .NET 10 for Windows. Publishing version 1.1.0 creates:
+Guided support includes MSI, WiX, EXE, Burn, Inno Setup, Nullsoft, MSIX, APPX, bundles, ZIP, portable packages, and fonts. Advanced mappings provide access to uncommon Winget installer fields when a package needs them.
 
-- A ReadyToRun, self-contained portable folder containing `WingetManifestStudio.exe` and its runtime files.
-- `SynixStudioSetup.msi` for a normal Windows installation.
+## Interface Languages
 
-The MSI is created automatically during Visual Studio Publish and contains the complete runtime payload. Keep all files in the portable publish folder together; use the MSI when distributing a single setup file.
+The Help & Guide page includes English and Spanish interface resources. The language choice is stored in the current Windows user's local application settings and is not written into package profiles.
 
-### Digital signing
+## Build from Source
 
-Publishing signs `WingetManifestStudio.exe` before MSI packaging and signs `SynixStudioSetup.msi` afterward when a code-signing certificate with a private key is installed in the current user's Windows certificate store. Set its thumbprint only for the publish process; no certificate or secret is stored in this repository:
+Requirements:
+
+- Windows
+- .NET 10 SDK
+- Visual Studio with Windows Forms support, or the `dotnet` command line
+- WiX Toolset SDK dependencies restored by the installer project
+
+Build the application:
+
+```powershell
+dotnet restore WingetManifestStudio.slnx
+dotnet build ManifestUpdater/WingetManifestStudio.csproj -c Release
+```
+
+Run the automated functional and off-screen interface tests without opening visible test windows:
+
+```powershell
+./ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe --self-test
+./ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe --ui-self-test
+./ManifestUpdater/bin/Release/net10.0-windows/WingetManifestStudio.exe --startup-probe
+```
+
+## Publish
+
+Visual Studio Publish and normal `dotnet publish` runs automatically build:
+
+- `WingetManifestStudio.exe`
+- `SynixStudioSetup.msi`
+
+The MSI is always named `SynixStudioSetup.msi`. It contains the framework-dependent application payload and requires the Microsoft .NET 10 Desktop Runtime x64; it does not package the framework itself.
+
+Example framework-dependent single-file publish:
+
+```powershell
+dotnet publish ManifestUpdater/WingetManifestStudio.csproj `
+  -c Release `
+  -r win-x64 `
+  --self-contained false `
+  -p:PublishSingleFile=true `
+  -p:PublishReadyToRun=true
+```
+
+### Digital Signing
+
+Publishing signs the EXE and MSI when a code-signing certificate with a private key is available in the current user's Windows certificate store. Supply only its thumbprint to the publish process:
 
 ```powershell
 $env:WMS_SIGNING_CERTIFICATE_THUMBPRINT = '<code-signing-certificate-thumbprint>'
 dotnet publish ManifestUpdater/WingetManifestStudio.csproj -p:PublishProfile=FolderProfile
 ```
 
-The publisher uses SHA-256 and an RFC 3161 timestamp, then verifies both signatures with the Windows SDK signing tool. If no certificate is supplied, publishing still succeeds but reports that the artifacts are unsigned. A trusted public code-signing certificate must be obtained from a certificate authority; the application cannot create that trust identity itself.
+The certificate and private key are never stored in this repository. Without a certificate, publishing succeeds but reports that the artifacts are unsigned.
 
-Signed artifacts materially improve publisher identity and Windows reputation, but reputation is also affected by certificate history and download prevalence. ReadyToRun publishing, deferred WingetCreate detection, and background inspection keep application startup work out of the first visible window.
+## Project Structure
 
-## Source Organization
+| Folder | Purpose |
+| --- | --- |
+| `Application` | Startup and crash reporting |
+| `Assets` | Application icons and images |
+| `Models` | Manifest and installer data |
+| `Services` | YAML, Winget, hashing, inspection, profiles, testing, and repository services |
+| `UI` | WinForms form, Designer resources, custom controls, and localization |
+| `Testing` | Functional and off-screen UI test runners |
+| `Packaging/MSI` | WiX installer project |
+| `Properties/PublishProfiles` | Visual Studio publish profiles |
 
-- `Application` contains startup and crash-reporting code.
-- `Assets` contains the application icon and image resources.
-- `Models` contains manifest and installer data objects.
-- `Services` contains YAML, installer inspection, Winget, repository, profile, and state logic.
-- `UI` contains the main WinForms form, its Designer resource files, custom controls, and interface text.
-- `Testing` contains the automated functional and off-screen interface test runners.
-- `Packaging/MSI` contains the WiX installer project.
-- `Properties/PublishProfiles` contains the Visual Studio publishing profiles.
+## Community
 
-The C# namespace remains `ManifestUpdater` so this folder-only organization does not change saved data, published assembly identity, or existing application behavior.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change.
+- Participation is governed by the [Community Code of Conduct](CODE_OF_CONDUCT.md).
+- Report vulnerabilities through the process in [SECURITY.md](SECURITY.md), not through a public issue.
+
+## License
+
+Winget Manifest Studio is available under the [MIT License](LICENSE).
+
+## Microsoft Trademark and Affiliation Notice
+
+Winget Manifest Studio is an independent community project. It is not affiliated with, endorsed by, or supported by Microsoft. Windows, Winget, Windows Package Manager, GitHub, and WingetCreate may be trademarks of their respective owners.
